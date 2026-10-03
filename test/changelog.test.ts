@@ -1,7 +1,6 @@
-import { test } from "node:test";
+import { test, mock } from "bun:test";
 import assert from "node:assert/strict";
 import fs, { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { syncBuiltinESMExports } from "node:module";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -484,7 +483,7 @@ test("invalid fragments leave the changelog and all fragments untouched", async 
   await writeFile(path.join(dir, "bad.md"), "Forgot the heading\n");
   await assert.rejects(generate({ dir, output, clear: true, dryRun: false }), /bad\.md: Line 1/);
   assert.equal(await readFile(output, "utf8"), original);
-  assert.deepEqual(await readdir(dir), ["bad.md", "good.md"]);
+  assert.deepEqual((await readdir(dir)).sort(), ["bad.md", "good.md"]);
 });
 
 test("invalid prerelease channels leave the changelog untouched", async () => {
@@ -534,51 +533,54 @@ test("stdout generation reads the configured input without writing or clearing",
   assert.deepEqual(await readdir(dir), ["fix.md"]);
 });
 
-test("fragment edits and additions during writing are kept for the next generation", async (t) => {
+test("fragment edits and additions during writing are kept for the next generation", async () => {
   const { dir, output } = await makeRoot();
   const file = path.join(dir, "fix.md");
   await writeFile(file, "## Fixes\n- original\n");
   const rename = fs.rename;
-  t.mock.method(fs, "rename", async (...args: Parameters<typeof rename>) => {
-    await rename(...args);
+  let onRename: (() => Promise<void>) | undefined;
+  mock.module("node:fs/promises", () => ({
+    ...fs,
+    rename: async (...args: Parameters<typeof rename>) => {
+      await rename(...args);
+      await onRename?.();
+    },
+  }));
+  onRename = async () => {
     await writeFile(file, "## Fixes\n- edited\n");
     await writeFile(path.join(dir, "new.md"), "## Fixes\n- added\n");
-  });
-  syncBuiltinESMExports();
-  try {
-    const result = await generate({ dir, output, clear: true, dryRun: false });
-    assert.deepEqual(result.fragments, ["fix.md"]);
-    assert.deepEqual(result.cleared, []);
-    assert.match(await readFile(output, "utf8"), /- original/);
-    assert.deepEqual(await readdir(dir), ["fix.md", "new.md"]);
-    assert.equal(await readFile(file, "utf8"), "## Fixes\n- edited\n");
-  } finally {
-    t.mock.restoreAll();
-    syncBuiltinESMExports();
-  }
+  };
+  const result = await generate({ dir, output, clear: true, dryRun: false });
+  onRename = undefined;
+  assert.deepEqual(result.fragments, ["fix.md"]);
+  assert.deepEqual(result.cleared, []);
+  assert.match(await readFile(output, "utf8"), /- original/);
+  assert.deepEqual((await readdir(dir)).sort(), ["fix.md", "new.md"]);
+  assert.equal(await readFile(file, "utf8"), "## Fixes\n- edited\n");
 });
 
-test("failed atomic replacement leaves the original and fragments intact", async (t) => {
+test("failed atomic replacement leaves the original and fragments intact", async () => {
   const { root, dir, output } = await makeRoot();
   const original = "# 1.0.0\n\n## Fixes\n- old\n";
   await writeFile(output, original);
   await writeFile(path.join(dir, "fix.md"), "## Fixes\n- new\n");
-  t.mock.method(fs, "rename", async () => {
-    throw new Error("Simulated rename failure");
-  });
-  syncBuiltinESMExports();
-  try {
-    await assert.rejects(
-      generate({ dir, output, clear: true, dryRun: false }),
-      /Simulated rename failure/,
-    );
-    assert.equal(await readFile(output, "utf8"), original);
-    assert.deepEqual(await readdir(dir), ["fix.md"]);
-    assert.deepEqual((await readdir(root)).sort(), ["CHANGELOG.md", "changelog.d"]);
-  } finally {
-    t.mock.restoreAll();
-    syncBuiltinESMExports();
-  }
+  let failRename = true;
+  const rename = fs.rename;
+  mock.module("node:fs/promises", () => ({
+    ...fs,
+    rename: async (...args: Parameters<typeof rename>) => {
+      if (failRename) throw new Error("Simulated rename failure");
+      await rename(...args);
+    },
+  }));
+  await assert.rejects(
+    generate({ dir, output, clear: true, dryRun: false }),
+    /Simulated rename failure/,
+  );
+  failRename = false;
+  assert.equal(await readFile(output, "utf8"), original);
+  assert.deepEqual(await readdir(dir), ["fix.md"]);
+  assert.deepEqual((await readdir(root)).sort(), ["CHANGELOG.md", "changelog.d"]);
 });
 
 test("CLI stdout uses the default changelog and previews existing unreleased content", async () => {

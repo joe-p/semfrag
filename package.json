@@ -3,6 +3,7 @@
   "version": "0.6.0",
   "description": "Semantic versioning and changelog generation based on markdown fragments",
   "type": "module",
+  "packageManager": "bun@1.4.2",
   "bin": {
     "semfrag": "dist/cli.js"
   },
@@ -16,15 +17,16 @@
   },
   "scripts": {
     "build": "tsc",
+    "build:binaries": "bun run scripts/build-binaries.ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --check .",
     "format:fix": "prettier --write .",
     "check-types": "tsc --noEmit",
-    "check": "pnpm run lint && pnpm run format && pnpm run check-types",
-    "fix": "pnpm run lint:fix && pnpm run format:fix && pnpm run check-types",
-    "test": "node --test test/*.test.ts",
-    "prepublishOnly": "pnpm build"
+    "check": "bun run lint && bun run format && bun run check-types",
+    "fix": "bun run lint:fix && bun run format:fix && bun run check-types",
+    "test": "bun test",
+    "prepublishOnly": "bun run build"
   },
   "keywords": [
     "changelog",
@@ -43,13 +45,6 @@
   },
   "bugs": {
     "url": "https://github.com/joe-p/semfrag/issues"
-  },
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.0.6",
-      "onFail": "warn"
-    }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

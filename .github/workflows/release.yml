@@ -31,29 +31,30 @@ jobs:
         id: base
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 11
+          bun-version: 1.4.2
 
+      # npm is still used to publish: it supports OIDC trusted publishing,
+      # which bun publish does not (oven-sh/bun#22423).
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       - name: Update npm
         run: npm install -g npm@latest
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Build
-        run: pnpm build
+        run: bun run build
 
       - name: Merge pending fragments
-        run: node dist/cli.js generate
+        run: bun dist/cli.js generate
 
       - name: Check for an unreleased section
         id: unreleased
@@ -68,15 +69,18 @@ jobs:
         id: release
         if: steps.unreleased.outputs.found == 'true'
         run: |
-          node dist/cli.js release
-          version="$(node dist/cli.js latest)"
+          bun dist/cli.js release
+          version="$(bun dist/cli.js latest)"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "notes<<SEMFRAG_NOTES_EOF" >> "$GITHUB_OUTPUT"
+          bun dist/cli.js notes >> "$GITHUB_OUTPUT"
+          echo "SEMFRAG_NOTES_EOF" >> "$GITHUB_OUTPUT"
 
       - name: Bump package.json version
         if: steps.release.outputs.version != ''
         env:
           VERSION: ${{ steps.release.outputs.version }}
-        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        run: bun pm pkg set "version=${VERSION}"
 
       - name: Commit and tag
         if: steps.release.outputs.version != ''
@@ -99,19 +103,27 @@ jobs:
             git push origin "v${VERSION}"
           fi
 
+      - name: Build standalone binaries
+        if: steps.release.outputs.version != ''
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: bun run scripts/build-binaries.ts
+
       - name: Create GitHub release
         if: steps.release.outputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
+          NOTES: ${{ steps.release.outputs.notes }}
         run: |
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "Release v${VERSION} already exists."
           else
             gh release create "v${VERSION}" \
               --title "v${VERSION}" \
-              --notes "$(node dist/cli.js notes)"
+              --notes "$NOTES"
           fi
+          gh release upload "v${VERSION}" build/binaries/* --clobber
 
       - name: Publish to npm
         if: steps.release.outputs.version != ''
