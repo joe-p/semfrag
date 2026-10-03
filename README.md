@@ -27,9 +27,43 @@ any fragments are cleared.
 
 ## Install
 
+As a dependency, with any package manager:
+
 ```sh
 pnpm add -D semfrag
+# or
+npm install -D semfrag
+# or
+bun add -d semfrag
 ```
+
+Or as a standalone binary that needs no runtime at all. Every
+[release](https://github.com/joe-p/semfrag/releases) ships self-contained
+executables built with `bun build --compile` for Linux, macOS and Windows on
+x64 and arm64:
+
+```sh
+# Linux x64
+curl -fsSL -o semfrag https://github.com/joe-p/semfrag/releases/latest/download/semfrag-linux-x64
+chmod +x semfrag
+./semfrag --version
+```
+
+The available assets are:
+
+| Target             | Asset                       |
+| ------------------ | --------------------------- |
+| Linux x64          | `semfrag-linux-x64`         |
+| Linux x64 (musl)   | `semfrag-linux-x64-musl`    |
+| Linux arm64        | `semfrag-linux-arm64`       |
+| Linux arm64 (musl) | `semfrag-linux-arm64-musl`  |
+| macOS x64          | `semfrag-darwin-x64`        |
+| macOS arm64        | `semfrag-darwin-arm64`      |
+| Windows x64        | `semfrag-windows-x64.exe`   |
+| Windows arm64      | `semfrag-windows-arm64.exe` |
+
+The binaries are **not** attached to npm; `semfrag` on npm stays a normal
+Node-compatible package for use as a dependency or via `npx`.
 
 ## Usage
 
@@ -346,7 +380,9 @@ built with.
 - [`.github/workflows/release.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/release.yml)
   runs on every push to `main`: it merges pending fragments with `generate`,
   finalizes the unreleased section with `release`, then commits, tags the version
-  from `latest`, and creates a GitHub release whose body is `notes`. The tag and
+  from `latest`, and creates a GitHub release whose body is `notes`. It then
+  cross-compiles the standalone binaries from `scripts/build-binaries.ts` and
+  uploads them to the release, and publishes the package to npm. The tag and
   release are the semantic version derived from the fragment sections.
 
 Together the two commands produce automatic changelogs, release notes, and

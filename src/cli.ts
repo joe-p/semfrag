@@ -10,7 +10,11 @@ import {
   sectionTypes,
 } from "./config.ts";
 
+// Replaced at build time by `bun build --define` for standalone binaries.
+declare const SEMFRAG_VERSION: string | undefined;
+
 function readVersion(): string {
+  if (typeof SEMFRAG_VERSION === "string") return SEMFRAG_VERSION;
   try {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     return pkg.version ?? "0.0.0";

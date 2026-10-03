@@ -16,37 +16,31 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          version: 11
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: pnpm
+          bun-version: 1.4.2
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
 
       - name: Lint
-        run: pnpm lint
+        run: bun run lint
 
       - name: Check formatting
-        run: pnpm format
+        run: bun run format
 
       - name: Check types
-        run: pnpm check-types
+        run: bun run check-types
 
       - name: Test
-        run: pnpm test
+        run: bun run test
 
       - name: Build
-        run: pnpm build
+        run: bun run build
 
       - name: Check changelog
-        run: node dist/cli.js generate --dry-run
+        run: bun dist/cli.js generate --dry-run
 
       - name: Require a changelog fragment for src changes
         env:
