@@ -490,6 +490,32 @@ test("promote enforces the prerelease ladder", async () => {
   }
 });
 
+test("promote advances a top prerelease up the ladder", async () => {
+  const { dir, output } = await makeRoot();
+  await writeFile(
+    output,
+    "# 1.0.1-alpha.1\n\n## Fixes\n\n- First\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
+  );
+
+  const beta = await promote({ output, dir, dryRun: false, channel: "beta", now: RELEASE_DATE });
+  assert.deepEqual(beta, { version: "1.0.1-beta.1", written: true });
+  assert.match(await readFile(output, "utf8"), /^# 1\.0\.1-beta\.1 - /);
+
+  const rc = await promote({ output, dir, dryRun: false, channel: "rc", now: RELEASE_DATE });
+  assert.deepEqual(rc, { version: "1.0.1-rc.1", written: true });
+  assert.match(await readFile(output, "utf8"), /^# 1\.0\.1-rc\.1 - /);
+
+  const stable = await promote({
+    output,
+    dir,
+    dryRun: false,
+    channel: "stable",
+    now: RELEASE_DATE,
+  });
+  assert.deepEqual(stable, { version: "1.0.1", written: true });
+  assert.match(await readFile(output, "utf8"), /^# 1\.0\.1 - /);
+});
+
 test("generate and promote preserve the changelog preamble", async () => {
   const { dir, output } = await makeRoot();
   const preamble = "# Changelog\n\nRelease notes for this project.\n\n";

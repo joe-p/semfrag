@@ -84,13 +84,18 @@ runs:
         semfrag generate "${args[@]}"
 
         if ! grep -qE '^# .*UNRELEASED' "$CHANGELOG"; then
-          if [ "$channel" = "stable" ] && latest="$(semfrag latest --output "$CHANGELOG" 2>/dev/null)" && [[ "$latest" == *-* ]]; then
-            echo "Promoting prerelease ${latest} to a stable release."
-          else
+          # Even without an unreleased section there can still be a release to
+          # make when the current top moves forward along the promotion ladder,
+          # such as alpha to beta or a prerelease to stable. A dry-run promote
+          # applies the same rules without writing, so an invalid move means
+          # there is nothing to release.
+          if ! semfrag promote "${args[@]}" "$channel" --dry-run >/dev/null 2>&1; then
             echo "No unreleased changes; nothing to release."
             echo "released=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          latest="$(semfrag latest --output "$CHANGELOG" 2>/dev/null || true)"
+          echo "Promoting ${latest:-the current version} to a ${channel} release."
         fi
 
         semfrag promote "${args[@]}" "$channel"
