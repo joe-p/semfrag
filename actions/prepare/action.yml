@@ -75,9 +75,13 @@ runs:
         semfrag generate "${args[@]}"
 
         if ! grep -qE '^# .*UNRELEASED' "$CHANGELOG"; then
-          echo "No unreleased changes; nothing to release."
-          echo "released=false" >> "$GITHUB_OUTPUT"
-          exit 0
+          if [ -z "$PRERELEASE" ] && latest="$(semfrag latest --output "$CHANGELOG" 2>/dev/null)" && [[ "$latest" == *-* ]]; then
+            echo "Promoting prerelease ${latest} to a stable release."
+          else
+            echo "No unreleased changes; nothing to release."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
         fi
 
         release_args=()
@@ -92,17 +96,31 @@ runs:
         notes_file="${RUNNER_TEMP}/semfrag/notes.md"
         mkdir -p "$(dirname "$notes_file")"
         semfrag notes --output "$CHANGELOG" > "$notes_file"
+        new_delimiter() {
+          printf 'SEMFRAG_NOTES_%s' "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+        }
+        delimiter="$(new_delimiter)"
+        while grep -Fqx "$delimiter" "$notes_file"; do
+          delimiter="$(new_delimiter)"
+        done
+        changelog_delimiter="$(new_delimiter)"
+        while grep -Fqx "$changelog_delimiter" <<< "$CHANGELOG"; do
+          changelog_delimiter="$(new_delimiter)"
+        done
 
         {
           echo "released=true"
           echo "version=${version}"
           echo "notes-file=${notes_file}"
-          echo "notes<<SEMFRAG_NOTES_EOF"
+          echo "notes<<${delimiter}"
           cat "$notes_file"
-          echo "SEMFRAG_NOTES_EOF"
+          echo "$delimiter"
         } >> "$GITHUB_OUTPUT"
         {
           echo "SEMFRAG_VERSION=${version}"
+          echo "SEMFRAG_CHANGELOG<<${changelog_delimiter}"
+          printf '%s\n' "$CHANGELOG"
+          echo "$changelog_delimiter"
           echo "SEMFRAG_NOTES_FILE=${notes_file}"
         } >> "$GITHUB_ENV"
         echo "Released ${version}."

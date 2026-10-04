@@ -79,7 +79,15 @@ runs:
         dir="${dir%/}"
         while IFS= read -r file; do
           case "$file" in
-            "$dir"/*) exit 0 ;;
+            "$dir"/*)
+              fragment="${file#"$dir"/}"
+              case "$fragment" in
+                "" | .* | */*) continue ;;
+              esac
+              if [[ "$fragment" == *.md && -f "$file" && ! -L "$file" ]]; then
+                exit 0
+              fi
+              ;;
           esac
         done <<< "$changed"
 

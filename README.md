@@ -445,9 +445,10 @@ publish above. A rollback cannot unpublish a package that already reached a
 registry, so make publish steps skip versions that already exist if you publish
 to more than one place.
 
-`publish` stages modified and deleted tracked files with `git add -u`; new files
-are not committed. See each `action.yml` for the full list of inputs, such as
-`tag-prefix`, `commit-message`, `assets` and `prerelease`.
+`publish` stages modified and deleted tracked files with `git add -u`, along
+with the configured changelog. Other new files are not committed. See each
+`action.yml` for the full list of inputs, such as `tag-prefix`, `commit-message`,
+`assets` and `prerelease`.
 
 ### Check pull requests
 

@@ -11,6 +11,10 @@ inputs:
     description: File containing the release notes. Defaults to the notes written by the prepare action in this job.
     required: false
     default: ""
+  changelog:
+    description: Changelog file to stage. Defaults to the path configured by the prepare action or CHANGELOG.md.
+    required: false
+    default: ""
   branch:
     description: Branch to push the release commit to.
     required: false
@@ -61,6 +65,7 @@ runs:
         COMMIT_MESSAGE: ${{ inputs.commit-message }}
         GIT_USER_NAME: ${{ inputs.git-user-name }}
         GIT_USER_EMAIL: ${{ inputs.git-user-email }}
+        CHANGELOG: ${{ inputs.changelog }}
       run: |
         set -euo pipefail
 
@@ -79,9 +84,17 @@ runs:
         } >> "$GITHUB_ENV"
         echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
+        changelog="${CHANGELOG:-${SEMFRAG_CHANGELOG:-CHANGELOG.md}}"
+        if [ -z "${SEMFRAG_BASE_SHA:-}" ]; then
+          echo "SEMFRAG_BASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+        fi
+
         git config user.name "$GIT_USER_NAME"
         git config user.email "$GIT_USER_EMAIL"
         git add -u
+        if [ -e "$changelog" ]; then
+          git add -- "$changelog"
+        fi
         if git diff --cached --quiet; then
           echo "No changes to commit."
         else
@@ -93,9 +106,21 @@ runs:
         run_commit_sha="$(git rev-parse HEAD)"
         echo "SEMFRAG_RUN_COMMIT_SHA=${run_commit_sha}" >> "$GITHUB_ENV"
         echo "commit-sha=${run_commit_sha}" >> "$GITHUB_OUTPUT"
-        git push origin "HEAD:refs/heads/${BRANCH}"
 
-        if git ls-remote --refs --exit-code origin "refs/tags/${tag}" >/dev/null 2>&1; then
+        tag_ref="refs/tags/${tag}"
+        remote_tag="$(git ls-remote --tags origin "$tag_ref" "${tag_ref}^{}")"
+        remote_tag_sha="$(awk -v peeled="${tag_ref}^{}" -v ref="$tag_ref" '
+          $2 == peeled { sha = $1 }
+          $2 == ref { direct = $1 }
+          END { print sha != "" ? sha : direct }
+        ' <<< "$remote_tag")"
+        if [ -n "$remote_tag_sha" ] && [ "$remote_tag_sha" != "$run_commit_sha" ]; then
+          echo "::error::Tag ${tag} already exists and points to ${remote_tag_sha}, not ${run_commit_sha}."
+          exit 1
+        fi
+
+        git push origin "HEAD:refs/heads/${BRANCH}"
+        if [ -n "$remote_tag_sha" ]; then
           echo "Tag ${tag} already exists."
         else
           git tag -f "$tag" "$run_commit_sha"
@@ -137,12 +162,15 @@ runs:
 
         if [ -n "$ASSETS" ]; then
           files=()
+          expand_glob() {
+            compgen -G "$1" || true
+          }
           while IFS= read -r pattern; do
             [ -n "$pattern" ] || continue
             matches=()
-            for match in $pattern; do
+            while IFS= read -r match; do
               [ -e "$match" ] && matches+=("$match")
-            done
+            done < <(expand_glob "$pattern")
             if [ "${#matches[@]}" -eq 0 ]; then
               echo "::error::No files match asset pattern: ${pattern}"
               exit 1
