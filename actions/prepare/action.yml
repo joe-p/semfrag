@@ -24,7 +24,7 @@ inputs:
     required: false
     default: ""
   prerelease:
-    description: Release as a prerelease. `alpha`, `beta` or `rc`, or any other value as a custom prerelease id.
+    description: Channel to promote to. One of `alpha`, `beta` or `rc`. Empty promotes to a stable release.
     required: false
     default: ""
 
@@ -72,25 +72,33 @@ runs:
           args+=(--config "$CONFIG")
         fi
 
+        channel="${PRERELEASE:-stable}"
+        case "$channel" in
+          stable | alpha | beta | rc) ;;
+          *)
+            echo "Unsupported prerelease channel: ${channel}. Use alpha, beta or rc." >&2
+            exit 1
+            ;;
+        esac
+
         semfrag generate "${args[@]}"
 
         if ! grep -qE '^# .*UNRELEASED' "$CHANGELOG"; then
-          if [ -z "$PRERELEASE" ] && latest="$(semfrag latest --output "$CHANGELOG" 2>/dev/null)" && [[ "$latest" == *-* ]]; then
-            echo "Promoting prerelease ${latest} to a stable release."
-          else
+          # Even without an unreleased section there can still be a release to
+          # make when the current top moves forward along the promotion ladder,
+          # such as alpha to beta or a prerelease to stable. A dry-run promote
+          # applies the same rules without writing, so an invalid move means
+          # there is nothing to release.
+          if ! semfrag promote "${args[@]}" "$channel" --dry-run >/dev/null 2>&1; then
             echo "No unreleased changes; nothing to release."
             echo "released=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          latest="$(semfrag latest --output "$CHANGELOG" 2>/dev/null || true)"
+          echo "Promoting ${latest:-the current version} to a ${channel} release."
         fi
 
-        release_args=()
-        case "$PRERELEASE" in
-          "") ;;
-          alpha | beta | rc) release_args+=("--${PRERELEASE}") ;;
-          *) release_args+=(--pre "$PRERELEASE") ;;
-        esac
-        semfrag release "${args[@]}" ${release_args[@]+"${release_args[@]}"}
+        semfrag promote "${args[@]}" "$channel"
 
         version="$(semfrag latest --output "$CHANGELOG")"
         notes_file="${RUNNER_TEMP}/semfrag/notes.md"

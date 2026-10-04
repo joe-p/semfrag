@@ -12,7 +12,7 @@ use it.
 Drop small markdown files into a `changelog.d` directory as you work, then run
 `semfrag generate` to merge them into a single unreleased section that is
 prepended to `CHANGELOG.md`. Fragments are cleared afterwards so the next release
-starts clean. Run `semfrag release` when you are ready to cut the release.
+starts clean. Run `semfrag promote stable` when you are ready to cut the release.
 
 Versions are read from the changelog itself: there is no version to pass by hand.
 The next version is the highest bump level among the pending sections applied to
@@ -79,7 +79,7 @@ section headings:
 ```sh
 semfrag init [options]
 semfrag generate [options]
-semfrag release [options]
+semfrag promote <channel> [options]
 semfrag latest [options]
 semfrag notes [options]
 ```
@@ -194,15 +194,17 @@ version (`1.0.0`), so the minor bump wins:
 - Released 1.0!
 ```
 
-### Release
+### Promote a release
 
 When you are ready to ship, run:
 
 ```sh
-semfrag release
+semfrag promote stable
 ```
 
-This replaces the ` - UNRELEASED` suffix with the release date:
+`promote` takes the channel to promote to as an argument: `stable`, `alpha`,
+`beta` or `rc`. `stable` finalizes the top section, replacing the ` - UNRELEASED`
+suffix (or a prerelease suffix) with the release date:
 
 ```md
 # 1.1.0 - January 1st, 2026
@@ -222,8 +224,8 @@ This replaces the ` - UNRELEASED` suffix with the release date:
 - Released 1.0!
 ```
 
-`release` fails if the top section is not unreleased, or if `changelog.d` still
-contains pending fragments (run `generate` first).
+`promote` fails if the top section cannot move to the requested channel, or if
+`changelog.d` still contains pending fragments (run `generate` first).
 
 ### Latest released version
 
@@ -261,11 +263,21 @@ released, and fails if the changelog has no released version yet.
 
 ### Pre-releases
 
-Use `release --alpha` (or `--beta`, `--rc`, `--pre <id>`) to tag the top
-unreleased section as a prerelease instead of finalizing it:
+Promotions move forward along the `alpha` -> `beta` -> `rc` -> `stable` ladder,
+so each channel only accepts certain top sections:
+
+| Command          | Accepted top section            |
+| ---------------- | ------------------------------- |
+| `promote alpha`  | `UNRELEASED`                    |
+| `promote beta`   | `UNRELEASED` or an alpha        |
+| `promote rc`     | `UNRELEASED`, alpha or beta     |
+| `promote stable` | `UNRELEASED`, alpha, beta or rc |
+
+Use `promote alpha` to tag the top unreleased section as a prerelease instead of
+finalizing it:
 
 ```sh
-semfrag release --alpha
+semfrag promote alpha
 ```
 
 ```md
@@ -306,7 +318,7 @@ generate a plain `1.0.1 - UNRELEASED` on top of the prerelease:
 - Released 1.0!
 ```
 
-A plain `release` finalizes the version by merging the unreleased section and all
+`promote stable` finalizes the version by merging the unreleased section and all
 same-version prerelease sections into `1.0.1` and removing the prerelease blocks:
 
 ```md
@@ -324,8 +336,8 @@ same-version prerelease sections into `1.0.1` and removing the prerelease blocks
 - Released 1.0!
 ```
 
-If there is no unreleased section, a plain `release` promotes the top prerelease
-to a final release.
+If there is no unreleased section, `promote stable` promotes the top prerelease
+to a final release. Custom prerelease tags are not supported.
 
 ### The initial release
 
@@ -333,14 +345,14 @@ When there is no released version yet, the first `generate` creates
 `# 1.0.0 - UNRELEASED`, or `# 0.1.0 - UNRELEASED` if you initialized with
 `--initial 0.1.0`. While the initial version is still unreleased it stays fixed
 regardless of the bump levels of the pending sections, so your first release is
-exactly the version you started with. Once `release` has been run, later changes
-bump normally from that version.
+exactly the version you started with. Once a release has been promoted, later
+changes bump normally from that version.
 
 ### Preview without writing
 
 ```sh
 semfrag generate --dry-run
-semfrag release --dry-run
+semfrag promote stable --dry-run
 ```
 
 `--dry-run` prints what would happen without writing to the changelog or clearing
@@ -351,6 +363,9 @@ to read a different changelog. Stdout generation never clears fragments.
 
 ### Options
 
+`promote` additionally takes the target channel as a positional argument
+(`stable`, `alpha`, `beta` or `rc`).
+
 | Option                | Description                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------ |
 | `-d, --dir <path>`    | Directory containing fragments (default: `changelog.d`)                                          |
@@ -358,10 +373,6 @@ to read a different changelog. Stdout generation never clears fragments.
 | `--input <path>`      | `generate` only: existing changelog to read (default: output path, or `CHANGELOG.md` for stdout) |
 | `-c, --config <path>` | Config file to read or, for `init`, write (default: `semfrag.json`)                              |
 | `--initial <version>` | `init` only: starting version, e.g. `0.1.0` or `1.0.0` (default: `1.0.0`)                        |
-| `--alpha`             | `release` only: tag as a prerelease, e.g. `1.0.1-alpha.1`                                        |
-| `--beta`              | `release` only: tag as a beta prerelease, e.g. `1.0.1-beta.1`                                    |
-| `--rc`                | `release` only: tag as a release candidate, e.g. `1.0.1-rc.1`                                    |
-| `--pre <id>`          | `release` only: tag with a custom prerelease id                                                  |
 | `--dry-run`           | Print the result without writing or clearing                                                     |
 | `--no-clear`          | Keep fragment files after generating                                                             |
 | `-h, --help`          | Show help                                                                                        |
@@ -378,7 +389,7 @@ install the standalone binary, so no language runtime is needed.
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `joe-p/semfrag/actions/setup`    | Install the standalone `semfrag` binary and add it to `PATH`                                                  |
 | `joe-p/semfrag/actions/check`    | Validate fragments with `generate --dry-run`, and optionally require a fragment when matching paths change    |
-| `joe-p/semfrag/actions/prepare`  | Run `generate` and `release`, and output `released`, `version`, `notes` and `notes-file`                      |
+| `joe-p/semfrag/actions/prepare`  | Run `generate` and `promote`, and output `released`, `version`, `notes` and `notes-file`                      |
 | `joe-p/semfrag/actions/publish`  | Commit the release, push it, tag it and create a GitHub release with the notes, optionally uploading `assets` |
 | `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and restore the branch                                  |
 
@@ -477,7 +488,7 @@ Outside GitHub Actions, the same release takes four commands:
 
 ```sh
 semfrag generate          # merge fragments into the unreleased section
-semfrag release           # drop the UNRELEASED suffix
+semfrag promote stable    # drop the UNRELEASED suffix
 tag="v$(semfrag latest)"  # tag the released version
 gh release create "$tag" --notes "$(semfrag notes)"
 ```
@@ -542,7 +553,7 @@ Replace `oldThing()` with `newThing()`.
 ## Programmatic API
 
 ```ts
-import { generate, init, latest, notes, release, parseChangelog } from "semfrag";
+import { generate, init, latest, notes, promote, parseChangelog } from "semfrag";
 
 await init({
   output: "CHANGELOG.md",
@@ -562,8 +573,8 @@ await generate({
   types: { "Upgrade Guide": "raw" },
 });
 
-await release({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false });
-await release({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false, prerelease: "alpha" });
+await promote({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false, channel: "stable" });
+await promote({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false, channel: "alpha" });
 
 const { version } = await latest({ output: "CHANGELOG.md" });
 const { notes } = await notes({ output: "CHANGELOG.md" });

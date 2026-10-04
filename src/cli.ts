@@ -1,7 +1,17 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
 import { readFileSync } from "node:fs";
-import { DEFAULT_INITIAL_VERSION, generate, init, latest, notes, release } from "./changelog.ts";
+import {
+  DEFAULT_INITIAL_VERSION,
+  generate,
+  init,
+  isPromoteChannel,
+  latest,
+  notes,
+  promote,
+  PROMOTE_CHANNELS,
+  type PromoteChannel,
+} from "./changelog.ts";
 import {
   DEFAULT_CONFIG_FILE,
   loadConfig,
@@ -27,7 +37,7 @@ const HELP = `semfrag - merge changelog.d fragments into a changelog
 
 Usage:
   semfrag [generate] [options]
-  semfrag release [options]
+  semfrag promote <channel> [options]
   semfrag latest [options]
   semfrag notes [options]
   semfrag init [options]
@@ -35,11 +45,11 @@ Usage:
 Commands:
   generate              Merge pending fragments into an unreleased section and
                         prepend it to the changelog. This is the default command.
-  release               Finalize the top unreleased section, stamping the release
-                        date next to the version. Without a prerelease flag,
-                        merges same-version prereleases into a release. With
-                        --alpha/--beta/--rc/--pre, tags the section as a
-                        prerelease instead. Fails if fragments are pending.
+  promote <channel>     Promote the top section to a release. <channel> is one of
+                        stable, alpha, beta or rc. "stable" finalizes the top
+                        unreleased or prerelease section, merging same-version
+                        prereleases. The other channels tag the top section as a
+                        prerelease. Fails if fragments are pending.
   latest                Print the latest released version from the changelog.
   notes                 Print the changelog body of the latest release, without
                         the version heading. Useful for release notes.
@@ -54,10 +64,6 @@ Options:
       --input <path>    Existing changelog to read (default: output, or CHANGELOG.md for stdout)
   -c, --config <path>   Config file to read or, for init, write (default: ${DEFAULT_CONFIG_FILE})
       --initial <ver>   init only: starting version, e.g. 0.1.0 or 1.0.0 (default: ${DEFAULT_INITIAL_VERSION})
-      --alpha           Tag the release as a prerelease, e.g. 1.0.1-alpha.1
-      --beta            Tag the release as a beta prerelease, e.g. 1.0.1-beta.1
-      --rc              Tag the release as a release candidate, e.g. 1.0.1-rc.1
-      --pre <id>        Tag the release with a custom prerelease id
       --dry-run         Print the result without writing or clearing
       --no-clear        Keep the fragment files after generating
   -h, --help            Show this help
@@ -68,13 +74,16 @@ bump level among the pending sections applied to the last released version. Whil
 the top section is "1.0.0 - UNRELEASED" and 1.0.0 has not been released, the
 version stays 1.0.0 regardless of bump level.
 
-Prereleases:
-  release --alpha renames the top "1.0.1 - UNRELEASED" section to
-  "1.0.1-alpha.1 - January 1st, 2026". Repeating it for the same version
-  increments the number; a different channel restarts at .1. New fragments still
-  generate a plain "1.0.1 - UNRELEASED" on top. A plain release then merges the
-  unreleased and all "1.0.1-*" prerelease sections into
-  "1.0.1 - January 1st, 2026" and removes them.
+Promotion:
+  Prereleases move forward along the alpha -> beta -> rc -> stable ladder.
+  "promote alpha" requires an unreleased top section, "promote beta" accepts an
+  unreleased or alpha top, "promote rc" accepts an unreleased, alpha or beta top,
+  and "promote stable" accepts any of them. For example, "promote alpha" renames
+  the top "1.0.1 - UNRELEASED" section to "1.0.1-alpha.1 - January 1st, 2026".
+  Repeating it for the same version increments the number; a different channel
+  restarts at .1. New fragments still generate a plain "1.0.1 - UNRELEASED" on
+  top. "promote stable" then merges the unreleased and all "1.0.1-*" prerelease
+  sections into "1.0.1 - January 1st, 2026" and removes them.
 
 Config file:
   A JSON object with a "sections" array listing the allowed sections in the order
@@ -115,10 +124,6 @@ async function main(): Promise<void> {
         initial: { type: "string" },
         "dry-run": { type: "boolean" },
         "no-clear": { type: "boolean" },
-        alpha: { type: "boolean" },
-        beta: { type: "boolean" },
-        rc: { type: "boolean" },
-        pre: { type: "string" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
       },
@@ -142,14 +147,28 @@ async function main(): Promise<void> {
   const command = positionals[0] ?? "generate";
   if (
     command !== "generate" &&
-    command !== "release" &&
+    command !== "promote" &&
     command !== "latest" &&
     command !== "notes" &&
     command !== "init"
   ) {
     fail(`unknown command: ${command}`);
   }
-  if (positionals.length > 1) {
+
+  let channel: PromoteChannel | undefined;
+  if (command === "promote") {
+    const requested = positionals[1];
+    if (requested === undefined) {
+      fail(`promote requires a channel: ${PROMOTE_CHANNELS.join(", ")}`);
+    }
+    if (positionals.length > 2) {
+      fail(`unexpected argument: ${positionals[2]}`);
+    }
+    if (!isPromoteChannel(requested)) {
+      fail(`unknown channel: ${requested}. Expected one of: ${PROMOTE_CHANNELS.join(", ")}`);
+    }
+    channel = requested;
+  } else if (positionals.length > 1) {
     fail(`unexpected argument: ${positionals[1]}`);
   }
 
@@ -157,20 +176,6 @@ async function main(): Promise<void> {
   const output = values.output ?? "CHANGELOG.md";
   const dryRun = values["dry-run"] ?? false;
 
-  const namedChannels = [
-    values.alpha ? "alpha" : undefined,
-    values.beta ? "beta" : undefined,
-    values.rc ? "rc" : undefined,
-  ].filter((channel): channel is string => channel !== undefined);
-
-  if (namedChannels.length > 1 || (namedChannels.length > 0 && values.pre !== undefined)) {
-    fail("choose only one of --alpha, --beta, --rc or --pre <id>");
-  }
-  const prerelease = namedChannels[0] ?? values.pre;
-
-  if (command !== "release" && prerelease !== undefined) {
-    fail("--alpha, --beta, --rc and --pre can only be used with release");
-  }
   if (command !== "generate" && values.input !== undefined) {
     fail("--input can only be used with generate");
   }
@@ -216,21 +221,20 @@ async function main(): Promise<void> {
 
   const config = await loadConfig(values.config);
 
-  if (command === "release") {
-    const result = await release({
+  if (command === "promote") {
+    const result = await promote({
       output,
       dir,
       dryRun,
-      prerelease,
+      channel: channel!,
       order: config ? sectionOrder(config) : undefined,
       types: config ? sectionTypes(config) : undefined,
     });
-    const released = result.prerelease ?? result.version;
     if (dryRun) {
-      process.stdout.write(`Would release ${released} in ${output}.\n`);
+      process.stdout.write(`Would promote to ${result.version} in ${output}.\n`);
       return;
     }
-    process.stdout.write(`Released ${released} in ${output}.\n`);
+    process.stdout.write(`Promoted to ${result.version} in ${output}.\n`);
     return;
   }
 

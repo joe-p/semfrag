@@ -17,11 +17,13 @@ export {
 } from "./generate.ts";
 export {
   DEFAULT_INITIAL_VERSION,
+  PROMOTE_CHANNELS,
   generate,
   init,
+  isPromoteChannel,
   latest,
   notes,
-  release,
+  promote,
   readFragments,
   selectBump,
   type GenerateOptions,
@@ -32,8 +34,9 @@ export {
   type LatestResult,
   type NotesOptions,
   type NotesResult,
-  type ReleaseOptions,
-  type ReleaseResult,
+  type PromoteChannel,
+  type PromoteOptions,
+  type PromoteResult,
 } from "./changelog.ts";
 export { formatReleaseDate } from "./date.ts";
 export {
