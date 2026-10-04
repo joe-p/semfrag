@@ -82,9 +82,13 @@ runs:
           exit "$status"
         fi
 
-        dir="${FRAGMENTS_DIR#./}"
-        dir="${dir%/}"
+        # Git reports repository-relative paths; compare absolute paths so
+        # fragments-dir can be relative, absolute, or contain dot segments.
+        repo_root="$(git rev-parse --show-toplevel)"
+        repo_root="$(cd -- "$repo_root" && pwd -P)"
+        dir="$(cd -- "$FRAGMENTS_DIR" 2>/dev/null && pwd -P)" || dir="$FRAGMENTS_DIR"
         while IFS= read -r file; do
+          file="${repo_root}/${file}"
           case "$file" in
             "$dir"/*)
               fragment="${file#"$dir"/}"
