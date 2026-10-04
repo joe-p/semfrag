@@ -71,8 +71,15 @@ runs:
         fi
 
         changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-        if ! printf '%s\n' "$changed" | grep -qE -- "$PATTERN"; then
-          exit 0
+        if grep -qE -- "$PATTERN" <<< "$changed"; then
+          :
+        else
+          status=$?
+          if [ "$status" -eq 1 ]; then
+            exit 0
+          fi
+          echo "::error::Could not match changed paths against require-fragment-for: ${PATTERN}"
+          exit "$status"
         fi
 
         dir="${FRAGMENTS_DIR#./}"
