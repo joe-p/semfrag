@@ -1,0 +1,24 @@
+name: Set up semfrag
+description: Install the standalone semfrag binary and add it to PATH. No language runtime is required.
+author: Joe Polny
+
+inputs:
+  version:
+    description: semfrag version to install, e.g. `0.7.0`, or `latest`. Defaults to the version of the commit this action is pinned to.
+    required: false
+    default: ""
+
+outputs:
+  version:
+    description: The installed semfrag version.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install semfrag
+      id: install
+      shell: bash
+      env:
+        SEMFRAG_INSTALL_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"

@@ -369,24 +369,110 @@ to read a different changelog. Stdout generation never clears fragments.
 
 ## CI/CD
 
-The commands are designed to run unattended, and this repository is itself a
-worked example: because `semfrag` is language-agnostic, its two GitHub
-Actions workflows can be referenced as a template for any project, whatever it is
-built with.
+The commands are designed to run unattended. For GitHub Actions, this repository
+ships composite actions that handle the semfrag side of a release, leaving the
+language-specific steps (bumping a manifest, publishing a package) to you. They
+install the standalone binary, so no language runtime is needed.
 
-- [`.github/workflows/pr.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/pr.yml)
-  runs `semfrag generate --dry-run` on every pull request, so an invalid
-  fragment fails the check before it can reach the changelog.
-- [`.github/workflows/release.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/release.yml)
-  runs on every push to `main`: it merges pending fragments with `generate`,
-  finalizes the unreleased section with `release`, then commits, tags the version
-  from `latest`, and creates a GitHub release whose body is `notes`. It then
-  cross-compiles the standalone binaries from `scripts/build-binaries.ts` and
-  uploads them to the release, and publishes the package to npm. The tag and
-  release are the semantic version derived from the fragment sections.
+| Action                           | Description                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `joe-p/semfrag/actions/setup`    | Install the standalone `semfrag` binary and add it to `PATH`                                                  |
+| `joe-p/semfrag/actions/check`    | Validate fragments with `generate --dry-run`, and optionally require a fragment when matching paths change    |
+| `joe-p/semfrag/actions/prepare`  | Run `generate` and `release`, and output `released`, `version`, `notes` and `notes-file`                      |
+| `joe-p/semfrag/actions/publish`  | Commit the release, push it, tag it and create a GitHub release with the notes, optionally uploading `assets` |
+| `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and restore the branch                                  |
 
-Together the two commands produce automatic changelogs, release notes, and
-semantic versions without a version to pass by hand:
+The actions are not versioned separately yet, so reference them by the full
+commit SHA of a semfrag release, with the version as a comment. Every release
+tag points at its release commit, so the SHA for a version is:
+
+```sh
+git ls-remote https://github.com/joe-p/semfrag refs/tags/v0.8.0
+```
+
+Dependabot's `github-actions` ecosystem understands this form and updates both
+the SHA and the comment. The binary the actions install follows the same pin: it
+defaults to the version in `package.json` at that commit. Pass `version` to
+override it, for example `version: latest`.
+
+### Release on every push
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main # the branch tip, so a queued run releases everything merged since
+          fetch-depth: 0
+
+      - uses: joe-p/semfrag/actions/prepare@<sha> # v0.8.0
+        id: semfrag
+
+      # Your language-specific bump, e.g. npm, cargo set-version, poetry version...
+      - if: steps.semfrag.outputs.released == 'true'
+        run: npm pkg set "version=${{ steps.semfrag.outputs.version }}"
+
+      - if: steps.semfrag.outputs.released == 'true'
+        uses: joe-p/semfrag/actions/publish@<sha> # v0.8.0
+
+      # Your language-specific publish.
+      - if: steps.semfrag.outputs.released == 'true'
+        run: npm publish
+
+      - if: failure() || cancelled()
+        uses: joe-p/semfrag/actions/rollback@<sha> # v0.8.0
+```
+
+`prepare`, `publish` and `rollback` share state through the job environment, so
+there is nothing to wire between them. `rollback` must be the **last** step: it
+then also undoes the release when one of your own steps fails, such as the
+publish above. A rollback cannot unpublish a package that already reached a
+registry, so make publish steps skip versions that already exist if you publish
+to more than one place.
+
+`publish` stages modified and deleted tracked files with `git add -u`; new files
+are not committed. See each `action.yml` for the full list of inputs, such as
+`tag-prefix`, `commit-message`, `assets` and `prerelease`.
+
+### Check pull requests
+
+```yaml
+on: pull_request
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: joe-p/semfrag/actions/check@<sha> # v0.8.0
+        with:
+          require-fragment-for: ^src/
+```
+
+This repository's own
+[`pr.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/pr.yml)
+and
+[`release.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/release.yml)
+use these actions, adding standalone binaries and an npm publish around them.
+
+Outside GitHub Actions, the same release takes four commands:
 
 ```sh
 semfrag generate          # merge fragments into the unreleased section

@@ -39,17 +39,35 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Check changelog
-        run: bun dist/cli.js generate --dry-run
-
-      - name: Require a changelog fragment for src changes
-        env:
-          BASE_REF: ${{ github.base_ref }}
+      - name: Put the built CLI on PATH
         run: |
-          changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
-          if printf '%s\n' "$changed" | grep -qE '^src/'; then
-            if ! printf '%s\n' "$changed" | grep -qE '^changelog\.d/'; then
-              echo "::error::Changes under src/ require a changelog fragment in changelog.d/"
-              exit 1
-            fi
-          fi
+          mkdir -p "$RUNNER_TEMP/semfrag-dev"
+          printf '#!/bin/sh\nexec bun "%s/dist/cli.js" "$@"\n' "$PWD" > "$RUNNER_TEMP/semfrag-dev/semfrag"
+          chmod +x "$RUNNER_TEMP/semfrag-dev/semfrag"
+          echo "$RUNNER_TEMP/semfrag-dev" >> "$GITHUB_PATH"
+
+      - name: Check changelog
+        uses: ./actions/check
+        with:
+          install: false
+          require-fragment-for: ^src/
+
+  setup-action:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Install the released binary
+        id: setup
+        uses: ./actions/setup
+
+      - name: Run semfrag
+        shell: bash
+        run: |
+          semfrag --version
+          test "$(semfrag --version)" = "${{ steps.setup.outputs.version }}"
