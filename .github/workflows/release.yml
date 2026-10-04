@@ -83,10 +83,12 @@ jobs:
         run: bun pm pkg set "version=${VERSION}"
 
       - name: Commit and tag
+        id: artifacts
         if: steps.release.outputs.version != ''
         env:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
+          echo "tag_create_attempted=false" >> "$GITHUB_OUTPUT"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
@@ -96,10 +98,13 @@ jobs:
             git commit -m "chore: release v${VERSION} [skip ci]"
           fi
           git push origin HEAD:main
-          if git rev-parse "v${VERSION}" >/dev/null 2>&1; then
+          run_commit_sha="$(git rev-parse HEAD)"
+          echo "commit_sha=${run_commit_sha}" >> "$GITHUB_OUTPUT"
+          if git ls-remote --refs --exit-code origin "refs/tags/v${VERSION}" >/dev/null 2>&1; then
             echo "Tag v${VERSION} already exists."
           else
-            git tag "v${VERSION}"
+            git tag -f "v${VERSION}" "$run_commit_sha"
+            echo "tag_create_attempted=true" >> "$GITHUB_OUTPUT"
             git push origin "v${VERSION}"
           fi
 
@@ -110,18 +115,25 @@ jobs:
         run: bun run scripts/build-binaries.ts
 
       - name: Create GitHub release
+        id: github_release
         if: steps.release.outputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
+          RUN_COMMIT_SHA: ${{ steps.artifacts.outputs.commit_sha }}
           NOTES: ${{ steps.release.outputs.notes }}
         run: |
+          echo "release_create_attempted=false" >> "$GITHUB_OUTPUT"
           if gh release view "v${VERSION}" >/dev/null 2>&1; then
             echo "Release v${VERSION} already exists."
           else
+            release_marker="<!-- semfrag-release-run:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT} -->"
+            printf -v release_notes '%s\n\n%s' "$NOTES" "$release_marker"
+            echo "release_create_attempted=true" >> "$GITHUB_OUTPUT"
             gh release create "v${VERSION}" \
               --title "v${VERSION}" \
-              --notes "$NOTES"
+              --target "$RUN_COMMIT_SHA" \
+              --notes "$release_notes"
           fi
           gh release upload "v${VERSION}" build/binaries/* --clobber
 
@@ -142,17 +154,40 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.release.outputs.version }}
           BASE_SHA: ${{ steps.base.outputs.sha }}
+          RUN_COMMIT_SHA: ${{ steps.artifacts.outputs.commit_sha }}
+          TAG_CREATE_ATTEMPTED: ${{ steps.artifacts.outputs.tag_create_attempted }}
+          RELEASE_CREATE_ATTEMPTED: ${{ steps.github_release.outputs.release_create_attempted }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          if [ -n "$VERSION" ]; then
-            echo "Deleting GitHub release and tag v${VERSION}..."
-            gh release delete "v${VERSION}" --yes --cleanup-tag 2>/dev/null || true
-            git push origin ":refs/tags/v${VERSION}" 2>/dev/null || true
+          if [ "$RELEASE_CREATE_ATTEMPTED" = "true" ] && [ -n "$RUN_COMMIT_SHA" ]; then
+            release_marker="<!-- semfrag-release-run:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT} -->"
+            release_info="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/v${VERSION}" 2>/dev/null || true)"
+            if [ -n "$release_info" ] && jq -e \
+              --arg tag "v${VERSION}" \
+              --arg commit "$RUN_COMMIT_SHA" \
+              --arg marker "$release_marker" \
+              '.tag_name == $tag and .target_commitish == $commit and (.body // "" | contains($marker))' \
+              <<< "$release_info" >/dev/null; then
+              echo "Deleting GitHub release v${VERSION} created by this run..."
+              gh release delete "v${VERSION}" --yes 2>/dev/null || true
+            else
+              echo "GitHub release v${VERSION} does not match this run; leaving it untouched."
+            fi
+          fi
+
+          if [ "$TAG_CREATE_ATTEMPTED" = "true" ] && [ -n "$RUN_COMMIT_SHA" ]; then
+            remote_tag_sha="$(git ls-remote --refs origin "refs/tags/v${VERSION}" 2>/dev/null | awk '{print $1}' || true)"
+            if [ "$remote_tag_sha" = "$RUN_COMMIT_SHA" ]; then
+              echo "Deleting tag v${VERSION} created by this run..."
+              git push --force-with-lease="refs/tags/v${VERSION}:${RUN_COMMIT_SHA}" origin ":refs/tags/v${VERSION}" 2>/dev/null || true
+            else
+              echo "Remote tag v${VERSION} does not point to this run's commit; leaving it untouched."
+            fi
           fi
 
           if [ -n "$BASE_SHA" ] && [ "$(git rev-parse HEAD)" != "$BASE_SHA" ]; then
             echo "Restoring main to ${BASE_SHA}..."
-            git push origin "+${BASE_SHA}:refs/heads/main"
+            git push --force-with-lease=refs/heads/main:"$(git rev-parse HEAD)" origin "+${BASE_SHA}:refs/heads/main"
           fi
