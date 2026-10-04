@@ -1,0 +1,65 @@
+name: semfrag rollback
+description: "Undo a failed release. Deletes the GitHub release and tag created by this run and restores the branch. Run it last with `if: failure() || cancelled()`."
+author: Joe Polny
+
+inputs:
+  token:
+    description: "Token used to delete the GitHub release. Needs `contents: write`."
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Roll back release
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -uo pipefail
+
+        tag="${SEMFRAG_TAG:-}"
+        branch="${SEMFRAG_BRANCH:-}"
+        base_sha="${SEMFRAG_BASE_SHA:-}"
+        run_commit_sha="${SEMFRAG_RUN_COMMIT_SHA:-}"
+
+        if [ -z "$run_commit_sha" ]; then
+          echo "Nothing was pushed by this run; nothing to roll back."
+          exit 0
+        fi
+
+        if [ "${SEMFRAG_RELEASE_CREATE_ATTEMPTED:-}" = "true" ]; then
+          release_marker="<!-- semfrag-release-run:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT} -->"
+          release_info="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${tag}" 2>/dev/null || true)"
+          if [ -n "$release_info" ] && jq -e \
+            --arg tag "$tag" \
+            --arg commit "$run_commit_sha" \
+            --arg marker "$release_marker" \
+            '.tag_name == $tag and .target_commitish == $commit and (.body // "" | contains($marker))' \
+            <<< "$release_info" >/dev/null; then
+            echo "Deleting GitHub release ${tag} created by this run..."
+            gh release delete "$tag" --yes || true
+          else
+            echo "GitHub release ${tag} does not match this run; leaving it untouched."
+          fi
+        fi
+
+        if [ "${SEMFRAG_TAG_CREATE_ATTEMPTED:-}" = "true" ]; then
+          remote_tag_sha="$(git ls-remote --refs origin "refs/tags/${tag}" 2>/dev/null | awk '{print $1}' || true)"
+          if [ "$remote_tag_sha" = "$run_commit_sha" ]; then
+            echo "Deleting tag ${tag} created by this run..."
+            git push --force-with-lease="refs/tags/${tag}:${run_commit_sha}" origin ":refs/tags/${tag}" || true
+          else
+            echo "Remote tag ${tag} does not point to this run's commit; leaving it untouched."
+          fi
+        fi
+
+        if [ -n "$base_sha" ] && [ "$base_sha" != "$run_commit_sha" ]; then
+          remote_branch_sha="$(git ls-remote --refs origin "refs/heads/${branch}" 2>/dev/null | awk '{print $1}' || true)"
+          if [ "$remote_branch_sha" = "$run_commit_sha" ]; then
+            echo "Restoring ${branch} to ${base_sha}..."
+            git push --force-with-lease="refs/heads/${branch}:${run_commit_sha}" origin "+${base_sha}:refs/heads/${branch}"
+          else
+            echo "Remote ${branch} does not point to this run's commit; leaving it untouched."
+          fi
+        fi

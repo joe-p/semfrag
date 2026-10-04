@@ -1,0 +1,106 @@
+name: semfrag check
+description: Validate changelog fragments and optionally require a fragment when matching paths change.
+author: Joe Polny
+
+inputs:
+  version:
+    description: semfrag version to install, e.g. `0.7.0`, or `latest`. Defaults to the version of the commit this action is pinned to.
+    required: false
+    default: ""
+  install:
+    description: Install the standalone semfrag binary. Set to `false` to use a `semfrag` already on PATH.
+    required: false
+    default: "true"
+  changelog:
+    description: Changelog file.
+    required: false
+    default: CHANGELOG.md
+  fragments-dir:
+    description: Directory containing changelog fragments.
+    required: false
+    default: changelog.d
+  config:
+    description: semfrag config file. Defaults to semfrag's own default (`semfrag.json`).
+    required: false
+    default: ""
+  require-fragment-for:
+    description: "Extended regular expression of changed paths that require a fragment, e.g. `^src/`. Empty disables the requirement. Needs a checkout with `fetch-depth: 0`."
+    required: false
+    default: ""
+  base-ref:
+    description: Branch to diff against when checking for a required fragment.
+    required: false
+    default: ${{ github.base_ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install semfrag
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        SEMFRAG_INSTALL_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../setup/install.sh"
+
+    - name: Validate fragments
+      shell: bash
+      env:
+        CHANGELOG: ${{ inputs.changelog }}
+        FRAGMENTS_DIR: ${{ inputs.fragments-dir }}
+        CONFIG: ${{ inputs.config }}
+      run: |
+        set -euo pipefail
+        args=(--dir "$FRAGMENTS_DIR" --output "$CHANGELOG")
+        if [ -n "$CONFIG" ]; then
+          args+=(--config "$CONFIG")
+        fi
+        semfrag generate --dry-run "${args[@]}"
+
+    - name: Require a fragment
+      if: inputs.require-fragment-for != ''
+      shell: bash
+      env:
+        FRAGMENTS_DIR: ${{ inputs.fragments-dir }}
+        PATTERN: ${{ inputs.require-fragment-for }}
+        BASE_REF: ${{ inputs.base-ref }}
+      run: |
+        set -euo pipefail
+        if [ -z "$BASE_REF" ]; then
+          echo "::error::require-fragment-for needs a base-ref (set automatically on pull_request events)."
+          exit 1
+        fi
+
+        changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+        if grep -qE -- "$PATTERN" <<< "$changed"; then
+          :
+        else
+          status=$?
+          if [ "$status" -eq 1 ]; then
+            exit 0
+          fi
+          echo "::error::Could not match changed paths against require-fragment-for: ${PATTERN}"
+          exit "$status"
+        fi
+
+        # Git reports repository-relative paths; compare absolute paths so
+        # fragments-dir can be relative, absolute, or contain dot segments.
+        repo_root="$(git rev-parse --show-toplevel)"
+        repo_root="$(cd -- "$repo_root" && pwd -P)"
+        dir="$(cd -- "$FRAGMENTS_DIR" 2>/dev/null && pwd -P)" || dir="$FRAGMENTS_DIR"
+        while IFS= read -r file; do
+          file="${repo_root}/${file}"
+          case "$file" in
+            "$dir"/*)
+              fragment="${file#"$dir"/}"
+              case "$fragment" in
+                "" | .* | */*) continue ;;
+              esac
+              if [[ "$fragment" == *.md && -f "$file" && ! -L "$file" ]]; then
+                exit 0
+              fi
+              ;;
+          esac
+        done <<< "$changed"
+
+        echo "::error::Changes matching ${PATTERN} require a changelog fragment in ${dir}/"
+        exit 1
