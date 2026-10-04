@@ -50,19 +50,36 @@ export interface GenerateResult {
   cleared: string[];
 }
 
-export interface ReleaseOptions {
+export const PROMOTE_CHANNELS = ["stable", "alpha", "beta", "rc"] as const;
+
+export type PromoteChannel = (typeof PROMOTE_CHANNELS)[number];
+
+export function isPromoteChannel(value: unknown): value is PromoteChannel {
+  return typeof value === "string" && (PROMOTE_CHANNELS as readonly string[]).includes(value);
+}
+
+// Which release states may be promoted to each target channel. A top section
+// that is "unreleased" can start any channel; a prerelease can only move
+// forward along the alpha -> beta -> rc -> stable ladder.
+const PROMOTE_SOURCES: Record<PromoteChannel, readonly string[]> = {
+  stable: ["unreleased", "alpha", "beta", "rc"],
+  alpha: ["unreleased"],
+  beta: ["unreleased", "alpha"],
+  rc: ["unreleased", "alpha", "beta"],
+};
+
+export interface PromoteOptions {
   output: string;
   dir?: string;
+  channel: PromoteChannel;
   dryRun: boolean;
-  prerelease?: string;
   order?: string[];
   types?: SectionTypes;
   now?: Date;
 }
 
-export interface ReleaseResult {
+export interface PromoteResult {
   version: string;
-  prerelease?: string;
   written: boolean;
 }
 
@@ -284,7 +301,15 @@ export async function generate(options: GenerateOptions): Promise<GenerateResult
   return { entry, version, title, level, previous, fragments: names, written, cleared };
 }
 
-export async function release(options: ReleaseOptions): Promise<ReleaseResult> {
+function currentChannel(block: VersionBlock): string {
+  if (block.unreleased) return "unreleased";
+  const prerelease = prereleaseOf(block.version);
+  if (prerelease === undefined) return "stable";
+  const match = /^(.*)\.\d+$/.exec(prerelease);
+  return match ? match[1]! : prerelease;
+}
+
+export async function promote(options: PromoteOptions): Promise<PromoteResult> {
   const existing = await readFile(options.output, "utf8");
   const { blocks, preamble } = parseChangelogDocument(existing, options.types);
 
@@ -292,13 +317,23 @@ export async function release(options: ReleaseOptions): Promise<ReleaseResult> {
   const pending = await listFragments(dir);
   if (pending.length > 0) {
     throw new Error(
-      `Cannot release: ${dir} still contains ${pending.length} pending fragment(s). Run generate first.`,
+      `Cannot promote: ${dir} still contains ${pending.length} pending fragment(s). Run generate first.`,
     );
   }
 
-  return options.prerelease !== undefined
-    ? releasePrerelease(options, blocks, options.prerelease, preamble)
-    : releaseFinal(options, blocks, preamble);
+  const top = blocks[0];
+  if (!top) {
+    throw new Error(`No version to promote in ${options.output}.`);
+  }
+
+  const current = currentChannel(top);
+  if (!PROMOTE_SOURCES[options.channel].includes(current)) {
+    throw new Error(`Cannot promote ${current} to ${options.channel} in ${options.output}.`);
+  }
+
+  return options.channel === "stable"
+    ? promoteStable(options, blocks, preamble)
+    : promotePrerelease(options, blocks, options.channel, preamble);
 }
 
 function latestReleased(blocks: VersionBlock[], output: string): VersionBlock {
@@ -329,24 +364,20 @@ export async function notes(options: NotesOptions): Promise<NotesResult> {
   return { version: released.version, notes };
 }
 
-async function releasePrerelease(
-  options: ReleaseOptions,
+async function promotePrerelease(
+  options: PromoteOptions,
   blocks: VersionBlock[],
-  channel: string,
+  channel: PromoteChannel,
   preamble: string,
-): Promise<ReleaseResult> {
-  const top = blocks[0];
-  if (!top || !top.unreleased) {
-    throw new Error(`No ${UNRELEASED_MARKER} section found in ${options.output}.`);
-  }
-
+): Promise<PromoteResult> {
+  const top = blocks[0]!;
   parseVersion(top.version);
-  const prerelease = nextPrerelease(
+  const version = nextPrerelease(
     top.version,
     channel,
     blocks.map((block) => block.version),
   );
-  const title = `${prerelease} - ${formatReleaseDate(options.now)}`;
+  const title = `${version} - ${formatReleaseDate(options.now)}`;
   const entry = renderChangelog(top.sections, title);
   const remainder = blocks
     .slice(1)
@@ -357,19 +388,15 @@ async function releasePrerelease(
     await atomicWrite(options.output, withPreamble(preamble, prependChangelog(remainder, entry)));
   }
 
-  return { version: baseVersion(top.version), prerelease, written: !options.dryRun };
+  return { version, written: !options.dryRun };
 }
 
-async function releaseFinal(
-  options: ReleaseOptions,
+async function promoteStable(
+  options: PromoteOptions,
   blocks: VersionBlock[],
   preamble: string,
-): Promise<ReleaseResult> {
-  const top = blocks[0];
-  if (!top || (!top.unreleased && !isPrerelease(top.version))) {
-    throw new Error(`No ${UNRELEASED_MARKER} section found in ${options.output}.`);
-  }
-
+): Promise<PromoteResult> {
+  const top = blocks[0]!;
   const base = baseVersion(top.version);
   const consumed: VersionBlock[] = [];
   let index = 0;

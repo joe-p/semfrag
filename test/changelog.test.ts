@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { generate, init, latest, notes, release } from "../src/changelog.ts";
+import { generate, init, latest, notes, promote } from "../src/changelog.ts";
 import { readConfig, sectionBumps, sectionOrder } from "../src/config.ts";
 
 const ORDER = ["Breaking Changes", "Fixes", "Features"];
@@ -165,17 +165,18 @@ test("generate is idempotent for raw sections when fragments are kept", async ()
   assert.equal((text.match(/Line one\./g) ?? []).length, 1);
 });
 
-test("release merges raw sections from prereleases", async () => {
+test("promote stable merges raw sections from prereleases", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(
     output,
     "# 1.0.1 - UNRELEASED\n\n## Details\n\nNew details.\n\n# 1.0.1-alpha.1\n\n## Details\n\nOld details.\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const result = await release({
+  const result = await promote({
     output,
     dir,
     dryRun: false,
+    channel: "stable",
     order: [...ORDER, "Details"],
     types: { Details: "raw" },
     now: RELEASE_DATE,
@@ -223,14 +224,20 @@ test("generate keeps the last released version when no section bumps", async () 
   assert.equal(result.level, undefined);
 });
 
-test("release removes the unreleased marker", async () => {
+test("promote stable removes the unreleased marker", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(
     output,
     "# 1.1.0 - UNRELEASED\n\n## Features\n\n- A new feature!\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const result = await release({ output, dir, dryRun: false, now: RELEASE_DATE });
+  const result = await promote({
+    output,
+    dir,
+    dryRun: false,
+    channel: "stable",
+    now: RELEASE_DATE,
+  });
 
   assert.deepEqual(result, { version: "1.1.0", written: true });
   assert.equal(
@@ -321,27 +328,33 @@ test("CLI notes prints the latest release body", async () => {
   assert.equal(result.stdout, "## Features\n\n- Released\n");
 });
 
-test("release fails without an unreleased section", async () => {
+test("promote stable fails without an unreleased or prerelease section", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(output, "# 1.0.0\n\n## Features\n\n- Released 1.0!\n");
 
-  await assert.rejects(release({ output, dir, dryRun: false }), /No UNRELEASED section/);
+  await assert.rejects(
+    promote({ output, dir, dryRun: false, channel: "stable" }),
+    /Cannot promote stable to stable/,
+  );
 });
 
-test("release fails while fragments are pending", async () => {
+test("promote fails while fragments are pending", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(output, "# 1.1.0 - UNRELEASED\n\n## Features\n\n- A new feature!\n");
   await writeFile(path.join(dir, "fix.md"), "## Fixes\n\n- Some fix\n");
 
-  await assert.rejects(release({ output, dir, dryRun: false }), /pending fragment/);
+  await assert.rejects(
+    promote({ output, dir, dryRun: false, channel: "stable" }),
+    /pending fragment/,
+  );
 });
 
-test("release dry run does not write", async () => {
+test("promote dry run does not write", async () => {
   const { dir, output } = await makeRoot();
   const before = "# 1.1.0 - UNRELEASED\n\n## Features\n\n- A new feature!\n";
   await writeFile(output, before);
 
-  const result = await release({ output, dir, dryRun: true });
+  const result = await promote({ output, dir, dryRun: true, channel: "stable" });
 
   assert.equal(result.written, false);
   assert.equal(await readFile(output, "utf8"), before);
@@ -354,14 +367,14 @@ test("prerelease flow: alpha, more work, then final merge", async () => {
     "# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- Fixed a bug\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const alpha = await release({
+  const alpha = await promote({
     output,
     dir,
     dryRun: false,
-    prerelease: "alpha",
+    channel: "alpha",
     now: RELEASE_DATE,
   });
-  assert.deepEqual(alpha, { version: "1.0.1", prerelease: "1.0.1-alpha.1", written: true });
+  assert.deepEqual(alpha, { version: "1.0.1-alpha.1", written: true });
   assert.equal(
     await readFile(output, "utf8"),
     `# 1.0.1-alpha.1 - ${RELEASED_ON}\n\n## Fixes\n\n- Fixed a bug\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n`,
@@ -383,7 +396,14 @@ test("prerelease flow: alpha, more work, then final merge", async () => {
     `# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- Some new fix\n\n# 1.0.1-alpha.1 - ${RELEASED_ON}\n\n## Fixes\n\n- Fixed a bug\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n`,
   );
 
-  const final = await release({ output, dir, dryRun: false, order: ORDER, now: RELEASE_DATE });
+  const final = await promote({
+    output,
+    dir,
+    dryRun: false,
+    channel: "stable",
+    order: ORDER,
+    now: RELEASE_DATE,
+  });
   assert.deepEqual(final, { version: "1.0.1", written: true });
   assert.equal(
     await readFile(output, "utf8"),
@@ -391,43 +411,49 @@ test("prerelease flow: alpha, more work, then final merge", async () => {
   );
 });
 
-test("prerelease release increments the same channel", async () => {
+test("promote alpha increments the same channel", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(
     output,
     "# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- More\n\n# 1.0.1-alpha.1\n\n## Fixes\n\n- First\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const result = await release({
+  const result = await promote({
     output,
     dir,
     dryRun: false,
-    prerelease: "alpha",
+    channel: "alpha",
     now: RELEASE_DATE,
   });
-  assert.equal(result.prerelease, "1.0.1-alpha.2");
+  assert.equal(result.version, "1.0.1-alpha.2");
   assert.match(await readFile(output, "utf8"), /^# 1\.0\.1-alpha\.2 - January 1st, 2026\n/);
 });
 
-test("prerelease release resets the number when switching channel", async () => {
+test("promote resets the number when switching channel", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(
     output,
     "# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- More\n\n# 1.0.1-alpha.2\n\n## Fixes\n\n- First\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const result = await release({ output, dir, dryRun: false, prerelease: "beta" });
-  assert.equal(result.prerelease, "1.0.1-beta.1");
+  const result = await promote({ output, dir, dryRun: false, channel: "beta" });
+  assert.equal(result.version, "1.0.1-beta.1");
 });
 
-test("final release promotes a top prerelease without an unreleased section", async () => {
+test("promote stable promotes a top prerelease without an unreleased section", async () => {
   const { dir, output } = await makeRoot();
   await writeFile(
     output,
     "# 1.0.1-alpha.2\n\n## Fixes\n\n- More\n\n# 1.0.1-alpha.1\n\n## Fixes\n\n- First\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n",
   );
 
-  const result = await release({ output, dir, dryRun: false, now: RELEASE_DATE });
+  const result = await promote({
+    output,
+    dir,
+    dryRun: false,
+    channel: "stable",
+    now: RELEASE_DATE,
+  });
 
   assert.deepEqual(result, { version: "1.0.1", written: true });
   assert.equal(
@@ -441,25 +467,41 @@ test("prerelease release fails without an unreleased section", async () => {
   await writeFile(output, "# 1.0.0\n\n## Features\n\n- Released 1.0!\n");
 
   await assert.rejects(
-    release({ output, dir, dryRun: false, prerelease: "alpha" }),
-    /No UNRELEASED section/,
+    promote({ output, dir, dryRun: false, channel: "alpha" }),
+    /Cannot promote stable to alpha/,
   );
 });
 
-test("generate and both release modes preserve the changelog preamble", async () => {
+test("promote enforces the prerelease ladder", async () => {
+  const { dir, output } = await makeRoot();
+  const cases: Array<[string, string]> = [
+    ["# 1.0.1-beta.1\n\n## Fixes\n- fix\n", "alpha"],
+    ["# 1.0.1-rc.1\n\n## Fixes\n- fix\n", "alpha"],
+    ["# 1.0.1-rc.1\n\n## Fixes\n- fix\n", "beta"],
+    ["# 1.0.1\n\n## Fixes\n- fix\n", "rc"],
+  ];
+  for (const [markdown, channel] of cases) {
+    await writeFile(output, markdown);
+    await assert.rejects(
+      promote({ output, dir, dryRun: false, channel: channel as "alpha" | "beta" | "rc" }),
+      new RegExp(`Cannot promote .* to ${channel}`),
+    );
+    assert.equal(await readFile(output, "utf8"), markdown);
+  }
+});
+
+test("generate and promote preserve the changelog preamble", async () => {
   const { dir, output } = await makeRoot();
   const preamble = "# Changelog\n\nRelease notes for this project.\n\n";
   await writeFile(output, `${preamble}# 1.0.0\n\n## Fixes\n\n- Old fix\n`);
   await writeFile(path.join(dir, "fix.md"), "## Fixes\n\n- New fix\n");
   await generate({ dir, output, clear: true, dryRun: false, order: ORDER, bump: BUMP });
   assert.ok((await readFile(output, "utf8")).startsWith(`${preamble}# 1.0.1 - UNRELEASED\n`));
-  await release({ dir, output, dryRun: false, prerelease: "preview.test", now: RELEASE_DATE });
+  await promote({ dir, output, dryRun: false, channel: "alpha", now: RELEASE_DATE });
   assert.ok(
-    (await readFile(output, "utf8")).startsWith(
-      `${preamble}# 1.0.1-preview.test.1 - ${RELEASED_ON}\n`,
-    ),
+    (await readFile(output, "utf8")).startsWith(`${preamble}# 1.0.1-alpha.1 - ${RELEASED_ON}\n`),
   );
-  await release({ dir, output, dryRun: false, now: RELEASE_DATE });
+  await promote({ dir, output, dryRun: false, channel: "stable", now: RELEASE_DATE });
   assert.ok((await readFile(output, "utf8")).startsWith(`${preamble}# 1.0.1 - ${RELEASED_ON}\n`));
 });
 
@@ -486,14 +528,38 @@ test("invalid fragments leave the changelog and all fragments untouched", async 
   assert.deepEqual((await readdir(dir)).sort(), ["bad.md", "good.md"]);
 });
 
-test("invalid prerelease channels leave the changelog untouched", async () => {
-  const { dir, output } = await makeRoot();
+test("CLI promote requires a known channel", async () => {
+  const { root, output } = await makeRoot();
   const original = "# 1.0.1 - UNRELEASED\n\n## Fixes\n- fix\n";
   await writeFile(output, original);
-  for (const prerelease of ["", "alpha+build", "alpha..test"]) {
-    await assert.rejects(release({ dir, output, dryRun: false, prerelease }), /Invalid/);
-    assert.equal(await readFile(output, "utf8"), original);
-  }
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const run = promisify(execFile);
+
+  await assert.rejects(
+    run(process.execPath, [cli, "promote"], { cwd: root }),
+    /promote requires a channel/,
+  );
+  await assert.rejects(
+    run(process.execPath, [cli, "promote", "gamma"], { cwd: root }),
+    /unknown channel: gamma/,
+  );
+  await assert.rejects(
+    run(process.execPath, [cli, "promote", "stable", "extra"], { cwd: root }),
+    /unexpected argument: extra/,
+  );
+  assert.equal(await readFile(output, "utf8"), original);
+});
+
+test("CLI promote tags the unreleased section", async () => {
+  const { root, output } = await makeRoot();
+  await writeFile(output, "# 1.0.1 - UNRELEASED\n\n## Fixes\n- fix\n");
+  const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+  const run = promisify(execFile);
+
+  const result = await run(process.execPath, [cli, "promote", "alpha"], { cwd: root });
+
+  assert.match(result.stdout, /Promoted to 1\.0\.1-alpha\.1/);
+  assert.match(await readFile(output, "utf8"), /^# 1\.0\.1-alpha\.1 - /);
 });
 
 test("invalid version headings and misplaced unreleased sections cannot discard history", async () => {
@@ -720,7 +786,13 @@ test("init 0.1.0 config makes breaking changes bump the minor version", async ()
     bump: sectionBumps(loaded),
   });
 
-  const released = await release({ output, dir, dryRun: false, order: sectionOrder(loaded) });
+  const released = await promote({
+    output,
+    dir,
+    dryRun: false,
+    channel: "stable",
+    order: sectionOrder(loaded),
+  });
   assert.deepEqual(released, { version: "0.1.0", written: true });
 
   await writeFile(path.join(dir, "breaking.md"), "## Breaking Changes\n\n- Another overhaul\n");
