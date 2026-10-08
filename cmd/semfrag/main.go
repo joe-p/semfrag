@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 	"strings"
@@ -13,6 +14,13 @@ import (
 // installed with `go install ...@vX.Y.Z` leave it empty and are resolved from
 // the module build info instead; local builds fall back to 0.0.0.
 var version = ""
+
+func main() {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintf(os.Stderr, "semfrag: %s\n", err)
+		os.Exit(1)
+	}
+}
 
 func resolveVersion() string {
 	if version != "" {
@@ -105,6 +113,8 @@ Config file:
   listed cause an error.
 `
 
+var shortOptionNames = map[byte]string{'d': "dir", 'o': "output", 'c': "config"}
+
 type cliArgs struct {
 	dir         string
 	output      string
@@ -120,139 +130,19 @@ type cliArgs struct {
 	positionals []string
 }
 
-func fail(message string) {
-	fmt.Fprintf(os.Stderr, "semfrag: %s\n", message)
-	os.Exit(1)
-}
-
-// nextValue consumes the token at index i as the value of option. A token that
-// looks like another option is rejected so a missing value cannot swallow a
-// flag such as --dry-run. Explicit forms (`--output=--weird`, `-o--weird`) and
-// the stdout value `-` remain valid.
-func nextValue(argv []string, i int, option string) (string, int, error) {
-	if i >= len(argv) {
-		return "", i, fmt.Errorf("Option '%s' argument is missing.", option)
-	}
-	value := argv[i]
-	if strings.HasPrefix(value, "-") && value != "-" {
-		return "", i, fmt.Errorf("Option '%s' argument is ambiguous.", option)
-	}
-	return value, i + 1, nil
-}
-
-func parseArgs(argv []string) (cliArgs, error) {
-	args := cliArgs{}
-	i := 0
-	for i < len(argv) {
-		arg := argv[i]
-		i++
-
-		if arg == "--" {
-			args.positionals = append(args.positionals, argv[i:]...)
-			break
-		}
-
-		if strings.HasPrefix(arg, "--") {
-			name := arg[2:]
-			value := ""
-			hasValue := false
-			if equals := strings.IndexByte(name, '='); equals >= 0 {
-				value = name[equals+1:]
-				name = name[:equals]
-				hasValue = true
-			}
-			switch name {
-			case "dir", "output", "input", "config", "initial":
-				if !hasValue {
-					v, next, err := nextValue(argv, i, "--"+name)
-					if err != nil {
-						return args, err
-					}
-					value = v
-					i = next
-				}
-				switch name {
-				case "dir":
-					args.dir = value
-				case "output":
-					args.output = value
-				case "input":
-					args.input = value
-					args.inputSet = true
-				case "config":
-					args.config = value
-				case "initial":
-					args.initial = value
-					args.initialSet = true
-				}
-			case "dry-run":
-				args.dryRun = true
-			case "no-clear":
-				args.noClear = true
-			case "help":
-				args.help = true
-			case "version":
-				args.version = true
-			default:
-				return args, fmt.Errorf("Unknown option '--%s'.", name)
-			}
-			continue
-		}
-
-		if len(arg) > 1 && arg[0] == '-' {
-			name := arg[1]
-			value := ""
-			hasValue := false
-			if len(arg) > 2 {
-				value = strings.TrimPrefix(arg[2:], "=")
-				hasValue = true
-			}
-			switch name {
-			case 'd', 'o', 'c':
-				if !hasValue {
-					v, next, err := nextValue(argv, i, fmt.Sprintf("-%c", name))
-					if err != nil {
-						return args, err
-					}
-					value = v
-					i = next
-				}
-				switch name {
-				case 'd':
-					args.dir = value
-				case 'o':
-					args.output = value
-				case 'c':
-					args.config = value
-				}
-			case 'h':
-				args.help = true
-			case 'v':
-				args.version = true
-			default:
-				return args, fmt.Errorf("Unknown option '-%c'.", name)
-			}
-			continue
-		}
-
-		args.positionals = append(args.positionals, arg)
-	}
-	return args, nil
-}
-
-func main() {
-	args, err := parseArgs(os.Args[1:])
+func run(argv []string, stdout, stderr io.Writer) error {
+	args, err := parseArgs(argv)
 	if err != nil {
-		fail(err.Error())
+		return err
 	}
 
 	if args.help {
-		fmt.Fprint(os.Stdout, help)
-		return
+		fmt.Fprint(stdout, help)
+		return nil
 	}
 	if args.version {
-		fmt.Fprintf(os.Stdout, "%s\n", resolveVersion())
-		return
+		fmt.Fprintf(stdout, "%s\n", resolveVersion())
+		return nil
 	}
 
 	command := "generate"
@@ -262,24 +152,24 @@ func main() {
 	switch command {
 	case "generate", "promote", "latest", "notes", "init":
 	default:
-		fail(fmt.Sprintf("unknown command: %s", command))
+		return fmt.Errorf("unknown command: %s", command)
 	}
 
 	var channel semfrag.PromoteChannel
 	if command == "promote" {
 		if len(args.positionals) < 2 {
-			fail(fmt.Sprintf("promote requires a channel: %s", joinChannels()))
+			return fmt.Errorf("promote requires a channel: %s", joinChannels())
 		}
 		if len(args.positionals) > 2 {
-			fail(fmt.Sprintf("unexpected argument: %s", args.positionals[2]))
+			return fmt.Errorf("unexpected argument: %s", args.positionals[2])
 		}
 		requested := args.positionals[1]
 		if !semfrag.IsPromoteChannel(requested) {
-			fail(fmt.Sprintf("unknown channel: %s. Expected one of: %s", requested, joinChannels()))
+			return fmt.Errorf("unknown channel: %s, expected one of: %s", requested, joinChannels())
 		}
 		channel = semfrag.PromoteChannel(requested)
 	} else if len(args.positionals) > 1 {
-		fail(fmt.Sprintf("unexpected argument: %s", args.positionals[1]))
+		return fmt.Errorf("unexpected argument: %s", args.positionals[1])
 	}
 
 	dir := args.dir
@@ -292,72 +182,36 @@ func main() {
 	}
 
 	if command != "generate" && args.inputSet {
-		fail("--input can only be used with generate")
+		return fmt.Errorf("--input can only be used with generate")
 	}
 	if command != "init" && args.initialSet {
-		fail("--initial can only be used with init")
+		return fmt.Errorf("--initial can only be used with init")
 	}
 
-	if command == "init" {
-		if output == "-" {
-			fail("init cannot write to stdout")
-		}
-		result, err := semfrag.Init(semfrag.InitOptions{
-			Output:  output,
-			Dir:     dir,
-			Version: args.initial,
-			Config:  args.config,
-			DryRun:  args.dryRun,
-		})
-		if err != nil {
-			fail(err.Error())
-		}
-		configNote := ""
-		if result.ConfigWritten {
-			if args.dryRun {
-				configNote = fmt.Sprintf(" and write %s", result.Config)
-			} else {
-				configNote = fmt.Sprintf(" and wrote %s", result.Config)
-			}
-		}
-		if args.dryRun {
-			fmt.Fprintf(os.Stdout, "Would initialize %s at %s%s.\n", output, result.Title, configNote)
-			return
-		}
-		fmt.Fprintf(os.Stdout, "Initialized %s at %s%s.\n", output, result.Title, configNote)
-		return
-	}
-
-	if command == "latest" {
+	switch command {
+	case "init":
+		return runInit(args, stdout, dir, output)
+	case "latest":
 		result, err := semfrag.Latest(semfrag.LatestOptions{Output: output})
 		if err != nil {
-			fail(err.Error())
+			return err
 		}
-		fmt.Fprintf(os.Stdout, "%s\n", result.Version)
-		return
-	}
-
-	if command == "notes" {
+		fmt.Fprintf(stdout, "%s\n", result.Version)
+		return nil
+	case "notes":
 		result, err := semfrag.Notes(semfrag.NotesOptions{Output: output})
 		if err != nil {
-			fail(err.Error())
+			return err
 		}
-		fmt.Fprintf(os.Stdout, "%s\n", result.Notes)
-		return
+		fmt.Fprintf(stdout, "%s\n", result.Notes)
+		return nil
 	}
 
 	config, err := semfrag.LoadConfig(args.config)
 	if err != nil {
-		fail(err.Error())
+		return err
 	}
-	var order []string
-	var bumps map[string]semfrag.BumpLevel
-	var types semfrag.SectionTypeMap
-	if config != nil {
-		order = semfrag.SectionOrder(*config)
-		bumps = semfrag.SectionBumps(*config)
-		types = semfrag.SectionTypes(*config)
-	}
+	order, bumps, types := configSettings(config)
 
 	if command == "promote" {
 		result, err := semfrag.Promote(semfrag.PromoteOptions{
@@ -369,14 +223,14 @@ func main() {
 			Types:   types,
 		})
 		if err != nil {
-			fail(err.Error())
+			return err
 		}
 		if args.dryRun {
-			fmt.Fprintf(os.Stdout, "Would promote to %s in %s.\n", result.Version, output)
-			return
+			fmt.Fprintf(stdout, "Would promote to %s in %s.\n", result.Version, output)
+			return nil
 		}
-		fmt.Fprintf(os.Stdout, "Promoted to %s in %s.\n", result.Version, output)
-		return
+		fmt.Fprintf(stdout, "Promoted to %s in %s.\n", result.Version, output)
+		return nil
 	}
 
 	result, err := semfrag.Generate(semfrag.GenerateOptions{
@@ -390,34 +244,75 @@ func main() {
 		Types:  types,
 	})
 	if err != nil {
-		fail(err.Error())
+		return err
+	}
+	return reportGenerate(stdout, stderr, output, args, result)
+}
+
+func runInit(args cliArgs, stdout io.Writer, dir, output string) error {
+	if output == "-" {
+		return fmt.Errorf("init cannot write to stdout")
+	}
+	result, err := semfrag.Init(semfrag.InitOptions{
+		Output:  output,
+		Dir:     dir,
+		Version: args.initial,
+		Config:  args.config,
+		DryRun:  args.dryRun,
+	})
+	if err != nil {
+		return err
 	}
 
+	configNote := ""
+	if result.ConfigWritten {
+		verb := "wrote"
+		if args.dryRun {
+			verb = "write"
+		}
+		configNote = fmt.Sprintf(" and %s %s", verb, result.Config)
+	}
+	if args.dryRun {
+		fmt.Fprintf(stdout, "Would initialize %s at %s%s.\n", output, result.Title, configNote)
+		return nil
+	}
+	fmt.Fprintf(stdout, "Initialized %s at %s%s.\n", output, result.Title, configNote)
+	return nil
+}
+
+func reportGenerate(stdout, stderr io.Writer, output string, args cliArgs, result semfrag.GenerateResult) error {
 	if result.Entry == "" {
-		fmt.Fprint(os.Stdout, "No changelog fragments found.\n")
-		return
+		fmt.Fprint(stdout, "No changelog fragments found.\n")
+		return nil
 	}
-
 	if args.dryRun || output == "-" {
-		fmt.Fprint(os.Stdout, result.Entry)
-		return
+		fmt.Fprint(stdout, result.Entry)
+		return nil
 	}
 
-	from := "initial"
-	if result.Previous != nil {
-		from = *result.Previous
+	from := result.Previous
+	if from == "" {
+		from = "initial"
 	}
 	bump := ""
-	if result.Level != nil && result.Previous != nil {
-		bump = fmt.Sprintf(" (%s)", *result.Level)
+	if result.Level != "" && result.Previous != "" {
+		bump = fmt.Sprintf(" (%s)", result.Level)
 	}
-	fmt.Fprintf(os.Stderr, "semfrag: %s -> %s%s\n", from, result.Version, bump)
+	fmt.Fprintf(stderr, "semfrag: %s -> %s%s\n", from, result.Version, bump)
 
 	tail := ".\n"
 	if len(result.Cleared) > 0 {
 		tail = fmt.Sprintf(" and cleared %d file(s).\n", len(result.Cleared))
 	}
-	fmt.Fprintf(os.Stdout, "Generated %s from %d fragment(s)%s", output, len(result.Fragments), tail)
+	fmt.Fprintf(stdout, "Generated %s from %d fragment(s)%s", output, len(result.Fragments), tail)
+	return nil
+}
+
+func configSettings(config *semfrag.ChangelogConfig) ([]string, map[string]semfrag.BumpLevel, semfrag.SectionTypes) {
+	if config == nil {
+		return nil, nil, nil
+	}
+	return config.Order(), config.Bumps(), config.Types()
 }
 
 func joinChannels() string {
@@ -426,4 +321,130 @@ func joinChannels() string {
 		channels[i] = string(channel)
 	}
 	return strings.Join(channels, ", ")
+}
+
+// nextValue consumes the token at index i as the value of option. A token that
+// looks like another option is rejected so a missing value cannot swallow a
+// flag such as --dry-run. Explicit forms (`--output=--weird`, `-o--weird`) and
+// the stdout value `-` remain valid.
+func nextValue(argv []string, i int, option string) (string, int, error) {
+	if i >= len(argv) {
+		return "", i, fmt.Errorf("option '%s' argument is missing", option)
+	}
+	value := argv[i]
+	if strings.HasPrefix(value, "-") && value != "-" {
+		return "", i, fmt.Errorf("option '%s' argument is ambiguous", option)
+	}
+	return value, i + 1, nil
+}
+
+func parseArgs(argv []string) (cliArgs, error) {
+	args := cliArgs{}
+	i := 0
+	for i < len(argv) {
+		arg := argv[i]
+		i++
+
+		switch {
+		case arg == "--":
+			args.positionals = append(args.positionals, argv[i:]...)
+			return args, nil
+		case strings.HasPrefix(arg, "--"):
+			next, err := parseLongOption(&args, argv, i, arg[2:])
+			if err != nil {
+				return args, err
+			}
+			i = next
+		case len(arg) > 1 && arg[0] == '-':
+			next, err := parseShortOption(&args, argv, i, arg)
+			if err != nil {
+				return args, err
+			}
+			i = next
+		default:
+			args.positionals = append(args.positionals, arg)
+		}
+	}
+	return args, nil
+}
+
+func parseLongOption(args *cliArgs, argv []string, i int, name string) (int, error) {
+	value := ""
+	hasValue := false
+	if equals := strings.IndexByte(name, '='); equals >= 0 {
+		value = name[equals+1:]
+		name = name[:equals]
+		hasValue = true
+	}
+
+	switch name {
+	case "dir", "output", "input", "config", "initial":
+		if !hasValue {
+			v, next, err := nextValue(argv, i, "--"+name)
+			if err != nil {
+				return i, err
+			}
+			value = v
+			i = next
+		}
+		setStringOption(args, name, value)
+	case "dry-run":
+		args.dryRun = true
+	case "no-clear":
+		args.noClear = true
+	case "help":
+		args.help = true
+	case "version":
+		args.version = true
+	default:
+		return i, fmt.Errorf("unknown option '--%s'", name)
+	}
+	return i, nil
+}
+
+func parseShortOption(args *cliArgs, argv []string, i int, arg string) (int, error) {
+	name := arg[1]
+	value := ""
+	hasValue := false
+	if len(arg) > 2 {
+		value = strings.TrimPrefix(arg[2:], "=")
+		hasValue = true
+	}
+
+	switch name {
+	case 'd', 'o', 'c':
+		if !hasValue {
+			v, next, err := nextValue(argv, i, fmt.Sprintf("-%c", name))
+			if err != nil {
+				return i, err
+			}
+			value = v
+			i = next
+		}
+		setStringOption(args, shortOptionNames[name], value)
+	case 'h':
+		args.help = true
+	case 'v':
+		args.version = true
+	default:
+		return i, fmt.Errorf("unknown option '-%c'", name)
+	}
+	return i, nil
+}
+
+func setStringOption(args *cliArgs, name, value string) {
+	switch name {
+	case "dir":
+		args.dir = value
+	case "output":
+		args.output = value
+	case "input":
+		args.input = value
+		args.inputSet = true
+	case "config":
+		args.config = value
+	case "initial":
+		args.initial = value
+		args.initialSet = true
+	}
 }

@@ -1,12 +1,16 @@
 package semfrag
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
+// BumpLevel is the component of a semantic version that a section bumps. The
+// zero value means "no bump".
 type BumpLevel string
 
 const (
@@ -15,19 +19,17 @@ const (
 	BumpMajor BumpLevel = "MAJOR"
 )
 
-var BumpLevels = []BumpLevel{BumpPatch, BumpMinor, BumpMajor}
-
+// bumpWeight orders levels so the most significant bump can be selected.
 var bumpWeight = map[BumpLevel]int{BumpPatch: 1, BumpMinor: 2, BumpMajor: 3}
 
+// IsBumpLevel reports whether value is one of MAJOR, MINOR or PATCH.
 func IsBumpLevel(value string) bool {
-	for _, level := range BumpLevels {
-		if string(level) == value {
-			return true
-		}
-	}
-	return false
+	_, ok := bumpWeight[BumpLevel(value)]
+	return ok
 }
 
+// ParsedVersion is a semantic version split into its components. Prerelease and
+// Build are empty when the version does not carry them.
 type ParsedVersion struct {
 	Major      int
 	Minor      int
@@ -46,7 +48,7 @@ var (
 )
 
 func invalidVersion(version string) error {
-	return fmt.Errorf(`Invalid semantic version: %q. Expected MAJOR.MINOR.PATCH.`, version)
+	return fmt.Errorf("invalid semantic version: %q, expected MAJOR.MINOR.PATCH", version)
 }
 
 func safeInteger(part string) (int, bool) {
@@ -57,6 +59,7 @@ func safeInteger(part string) (int, bool) {
 	return value, true
 }
 
+// ParseVersion parses a semantic version, tolerating a leading v.
 func ParseVersion(version string) (ParsedVersion, error) {
 	match := versionRe.FindStringSubmatch(strings.TrimSpace(version))
 	if match == nil {
@@ -88,6 +91,8 @@ func ParseVersion(version string) (ParsedVersion, error) {
 	return parsed, nil
 }
 
+// ApplyBump returns version with level applied, dropping any prerelease or
+// build metadata.
 func ApplyBump(version string, level BumpLevel) (string, error) {
 	parsed, err := ParseVersion(version)
 	if err != nil {
@@ -102,10 +107,11 @@ func ApplyBump(version string, level BumpLevel) (string, error) {
 	case BumpPatch:
 		return checkedVersion(fmt.Sprintf("%d.%d.%d", parsed.Major, parsed.Minor, parsed.Patch+1))
 	default:
-		return "", fmt.Errorf("Invalid bump level: %q.", level)
+		return "", fmt.Errorf("invalid bump level %q", level)
 	}
 }
 
+// BaseVersion returns version without prerelease or build metadata.
 func BaseVersion(version string) (string, error) {
 	parsed, err := ParseVersion(version)
 	if err != nil {
@@ -114,6 +120,8 @@ func BaseVersion(version string) (string, error) {
 	return fmt.Sprintf("%d.%d.%d", parsed.Major, parsed.Minor, parsed.Patch), nil
 }
 
+// PrereleaseOf returns the prerelease part of version, or "" when it has none
+// or is not a valid version.
 func PrereleaseOf(version string) string {
 	parsed, err := ParseVersion(version)
 	if err != nil {
@@ -122,6 +130,7 @@ func PrereleaseOf(version string) string {
 	return parsed.Prerelease
 }
 
+// IsPrerelease reports whether version carries prerelease metadata.
 func IsPrerelease(version string) bool {
 	return PrereleaseOf(version) != ""
 }
@@ -133,9 +142,10 @@ func checkedVersion(version string) (string, error) {
 	return version, nil
 }
 
+// PrereleaseVersion tags base with channel and number, e.g. 1.2.3-alpha.1.
 func PrereleaseVersion(base, channel string, number int) (string, error) {
 	if !channelRe.MatchString(channel) || number < 1 || number > maxSafeInteger {
-		return "", fmt.Errorf("Invalid prerelease channel or number.")
+		return "", errors.New("invalid prerelease channel or number")
 	}
 	baseVersion, err := BaseVersion(base)
 	if err != nil {
@@ -144,6 +154,8 @@ func PrereleaseVersion(base, channel string, number int) (string, error) {
 	return checkedVersion(fmt.Sprintf("%s-%s.%d", baseVersion, channel, number))
 }
 
+// NextPrerelease returns the next prerelease for base and channel, incrementing
+// the highest matching number found in versions and restarting at .1 otherwise.
 func NextPrerelease(base, channel string, versions []string) (string, error) {
 	target, err := BaseVersion(base)
 	if err != nil {
@@ -160,13 +172,11 @@ func NextPrerelease(base, channel string, versions []string) (string, error) {
 		if err != nil || versionBase != target {
 			continue
 		}
-
 		match := prereleaseNumRe.FindStringSubmatch(prerelease)
 		if match == nil || match[1] != channel {
 			continue
 		}
-		number, _ := strconv.Atoi(match[2])
-		if number > highest {
+		if number, _ := strconv.Atoi(match[2]); number > highest {
 			highest = number
 		}
 	}
@@ -174,6 +184,8 @@ func NextPrerelease(base, channel string, versions []string) (string, error) {
 	return PrereleaseVersion(target, channel, highest+1)
 }
 
+// CompareBase compares the core versions of a and b, ignoring prerelease and
+// build metadata.
 func CompareBase(a, b string) (int, error) {
 	left, err := ParseVersion(a)
 	if err != nil {
@@ -183,22 +195,22 @@ func CompareBase(a, b string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	if left.Major != right.Major {
-		return left.Major - right.Major, nil
+	if c := cmp.Compare(left.Major, right.Major); c != 0 {
+		return c, nil
 	}
-	if left.Minor != right.Minor {
-		return left.Minor - right.Minor, nil
+	if c := cmp.Compare(left.Minor, right.Minor); c != 0 {
+		return c, nil
 	}
-	return left.Patch - right.Patch, nil
+	return cmp.Compare(left.Patch, right.Patch), nil
 }
 
+// HighestBase returns the base version of the highest of versions, or 0.0.0
+// when none are given.
 func HighestBase(versions ...string) (string, error) {
 	highest := ""
-	found := false
-	for _, version := range versions {
-		if !found {
+	for i, version := range versions {
+		if i == 0 {
 			highest = version
-			found = true
 			continue
 		}
 		comparison, err := CompareBase(version, highest)
@@ -209,27 +221,28 @@ func HighestBase(versions ...string) (string, error) {
 			highest = version
 		}
 	}
-	if !found {
+	if highest == "" {
 		return "0.0.0", nil
 	}
 	return BaseVersion(highest)
 }
 
-func HighestBump(levels []BumpLevel) (BumpLevel, bool) {
-	var highest BumpLevel
-	found := false
+// HighestBump returns the most significant level, or "" when levels is empty.
+func HighestBump(levels []BumpLevel) BumpLevel {
+	highest := BumpLevel("")
 	for _, level := range levels {
-		if !found || bumpWeight[level] > bumpWeight[highest] {
+		if highest == "" || bumpWeight[level] > bumpWeight[highest] {
 			highest = level
-			found = true
 		}
 	}
-	return highest, found
+	return highest
 }
 
-func NextVersion(base string, level *BumpLevel) (string, error) {
-	if level == nil {
+// NextVersion applies level to base, returning base unchanged for an empty
+// level.
+func NextVersion(base string, level BumpLevel) (string, error) {
+	if level == "" {
 		return base, nil
 	}
-	return ApplyBump(base, *level)
+	return ApplyBump(base, level)
 }

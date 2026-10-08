@@ -79,8 +79,8 @@ func TestGenerateReadsVersionFromChangelog(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, first.Version, "1.0.1")
-	assertEqual(t, first.Previous != nil && *first.Previous == "1.0.0", true)
-	assertEqual(t, first.Level != nil && *first.Level == BumpPatch, true)
+	assertEqual(t, first.Previous, "1.0.0")
+	assertEqual(t, first.Level, BumpPatch)
 	assertEqual(t, readFile(t, output), "# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- Some fix\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n")
 	assertEqual(t, readDir(t, dir), []string{})
 
@@ -90,7 +90,7 @@ func TestGenerateReadsVersionFromChangelog(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, second.Version, "1.1.0")
-	assertEqual(t, second.Level != nil && *second.Level == BumpMinor, true)
+	assertEqual(t, second.Level, BumpMinor)
 	assertEqual(t, readFile(t, output), "# 1.1.0 - UNRELEASED\n\n## Fixes\n\n- Some fix\n\n## Features\n\n- A new feature!\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n")
 }
 
@@ -103,7 +103,7 @@ func TestGenerateKeepsInitialUnreleasedVersion(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, first.Version, "1.0.0")
-	assertEqual(t, first.Previous == nil, true)
+	assertEqual(t, first.Previous, "")
 	assertEqual(t, readFile(t, output), "# 1.0.0 - UNRELEASED\n\n## Fixes\n\n- Some fix\n")
 
 	writeFile(t, filepath.Join(dir, "feat.md"), "## Features\n\n- A new feature!\n")
@@ -140,7 +140,7 @@ func TestGeneratePreservesRawSectionsAndNestedMarkdown(t *testing.T) {
 		DryRun: false,
 		Order:  orderWith("Details"),
 		Bump:   testBump,
-		Types:  SectionTypeMap{"Details": SectionTypeRaw},
+		Types:  SectionTypes{"Details": SectionRaw},
 	})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
@@ -160,7 +160,7 @@ func TestGenerateIsIdempotentForRawSections(t *testing.T) {
 		DryRun: false,
 		Order:  []string{"Details"},
 		Bump:   map[string]BumpLevel{},
-		Types:  SectionTypeMap{"Details": SectionTypeRaw},
+		Types:  SectionTypes{"Details": SectionRaw},
 	}
 	if _, err := Generate(options); err != nil {
 		t.Fatalf("Generate returned error: %v", err)
@@ -181,7 +181,7 @@ func TestPromoteStableMergesRawSectionsFromPrereleases(t *testing.T) {
 		DryRun:  false,
 		Channel: ChannelStable,
 		Order:   orderWith("Details"),
-		Types:   SectionTypeMap{"Details": SectionTypeRaw},
+		Types:   SectionTypes{"Details": SectionRaw},
 		Now:     testDate,
 	})
 	if err != nil {
@@ -213,7 +213,7 @@ func TestGenerateKeepsLastReleasedVersionWhenNoBumps(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, result.Version, "1.2.3")
-	assertEqual(t, result.Level == nil, true)
+	assertEqual(t, result.Level, BumpLevel(""))
 }
 
 func TestPromoteStableRemovesUnreleasedMarker(t *testing.T) {
@@ -255,7 +255,7 @@ func TestLatestFailsWithoutReleasedVersion(t *testing.T) {
 	writeFile(t, output, "# 1.0.0 - UNRELEASED\n\n## Features\n\n- Pending\n")
 
 	_, err := Latest(LatestOptions{Output: output})
-	assertErrorContains(t, err, "No released version")
+	assertErrorContains(t, err, "no released version")
 }
 
 func TestNotesReturnsBodyOfLatestRelease(t *testing.T) {
@@ -285,7 +285,7 @@ func TestNotesFailsWithoutReleasedVersion(t *testing.T) {
 	writeFile(t, output, "# 1.0.0 - UNRELEASED\n\n## Features\n\n- Pending\n")
 
 	_, err := Notes(NotesOptions{Output: output})
-	assertErrorContains(t, err, "No released version")
+	assertErrorContains(t, err, "no released version")
 }
 
 func TestPromoteStableFailsWithoutUnreleasedSection(t *testing.T) {
@@ -293,7 +293,7 @@ func TestPromoteStableFailsWithoutUnreleasedSection(t *testing.T) {
 	writeFile(t, output, "# 1.0.0\n\n## Features\n\n- Released 1.0!\n")
 
 	_, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: ChannelStable})
-	assertErrorContains(t, err, "Cannot promote stable to stable")
+	assertErrorContains(t, err, "cannot promote stable to stable")
 }
 
 func TestPromoteFailsWhileFragmentsPending(t *testing.T) {
@@ -335,7 +335,7 @@ func TestPrereleaseFlow(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, generated.Version, "1.0.1")
-	assertEqual(t, generated.Previous != nil && *generated.Previous == "1.0.0", true)
+	assertEqual(t, generated.Previous, "1.0.0")
 	assertEqual(t, readFile(t, output), "# 1.0.1 - UNRELEASED\n\n## Fixes\n\n- Some new fix\n\n# 1.0.1-alpha.1 - "+releasedOn+"\n\n## Fixes\n\n- Fixed a bug\n\n# 1.0.0\n\n## Features\n\n- Released 1.0!\n")
 
 	final, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: ChannelStable, Order: testOrder, Now: testDate})
@@ -386,7 +386,7 @@ func TestPrereleaseFailsWithoutUnreleasedSection(t *testing.T) {
 	writeFile(t, output, "# 1.0.0\n\n## Features\n\n- Released 1.0!\n")
 
 	_, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: ChannelAlpha})
-	assertErrorContains(t, err, "Cannot promote stable to alpha")
+	assertErrorContains(t, err, "cannot promote stable to alpha")
 }
 
 func TestPromoteEnforcesPrereleaseLadder(t *testing.T) {
@@ -403,7 +403,7 @@ func TestPromoteEnforcesPrereleaseLadder(t *testing.T) {
 	for _, test := range cases {
 		writeFile(t, output, test.markdown)
 		_, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: test.channel})
-		assertErrorContains(t, err, "Cannot promote")
+		assertErrorContains(t, err, "cannot promote")
 		assertErrorContains(t, err, " to "+string(test.channel))
 		assertEqual(t, readFile(t, output), test.markdown)
 	}
@@ -476,7 +476,7 @@ func TestInvalidFragmentsLeaveEverythingUntouched(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "bad.md"), "Forgot the heading\n")
 
 	_, err := Generate(GenerateOptions{Dir: dir, Output: output, Clear: true, DryRun: false})
-	assertErrorContains(t, err, "bad.md: Line 1")
+	assertErrorContains(t, err, "bad.md: line 1")
 	assertEqual(t, readFile(t, output), original)
 	assertEqual(t, readDir(t, dir), []string{"bad.md", "good.md"})
 }
@@ -493,7 +493,7 @@ func TestInvalidVersionHeadingsCannotDiscardHistory(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected error for %q", original)
 		}
-		if !strings.Contains(err.Error(), "Invalid semantic version") && !strings.Contains(err.Error(), "only at the top") {
+		if !strings.Contains(err.Error(), "invalid semantic version") && !strings.Contains(err.Error(), "only at the top") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		assertEqual(t, readFile(t, output), original)
@@ -655,7 +655,7 @@ func TestInitRejectsPrereleaseBuildAndInvalidVersions(t *testing.T) {
 		if err == nil {
 			t.Fatalf("expected error for version %q", version)
 		}
-		if !strings.Contains(err.Error(), "Invalid initial version") && !strings.Contains(err.Error(), "Invalid semantic version") {
+		if !strings.Contains(err.Error(), "invalid initial version") && !strings.Contains(err.Error(), "invalid semantic version") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	}
@@ -689,7 +689,7 @@ func TestGenerateKeepsZeroInitialVersion(t *testing.T) {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, result.Version, "0.1.0")
-	assertEqual(t, result.Previous == nil, true)
+	assertEqual(t, result.Previous, "")
 	assertEqual(t, readFile(t, output), "# 0.1.0 - UNRELEASED\n\n## Breaking Changes\n\n- Overhaul\n")
 }
 
@@ -704,21 +704,21 @@ func TestInitZeroConfigMakesBreakingChangesBumpMinor(t *testing.T) {
 	}
 
 	writeFile(t, filepath.Join(dir, "breaking.md"), "## Breaking Changes\n\n- Overhaul\n")
-	if _, err := Generate(GenerateOptions{Dir: dir, Output: output, Clear: true, DryRun: false, Order: SectionOrder(loaded), Bump: SectionBumps(loaded)}); err != nil {
+	if _, err := Generate(GenerateOptions{Dir: dir, Output: output, Clear: true, DryRun: false, Order: loaded.Order(), Bump: loaded.Bumps()}); err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 
-	released, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: ChannelStable, Order: SectionOrder(loaded)})
+	released, err := Promote(PromoteOptions{Output: output, Dir: dir, DryRun: false, Channel: ChannelStable, Order: loaded.Order()})
 	if err != nil {
 		t.Fatalf("Promote returned error: %v", err)
 	}
 	assertEqual(t, released, PromoteResult{Version: "0.1.0", Written: true})
 
 	writeFile(t, filepath.Join(dir, "breaking.md"), "## Breaking Changes\n\n- Another overhaul\n")
-	next, err := Generate(GenerateOptions{Dir: dir, Output: output, Clear: true, DryRun: false, Order: SectionOrder(loaded), Bump: SectionBumps(loaded)})
+	next, err := Generate(GenerateOptions{Dir: dir, Output: output, Clear: true, DryRun: false, Order: loaded.Order(), Bump: loaded.Bumps()})
 	if err != nil {
 		t.Fatalf("Generate returned error: %v", err)
 	}
 	assertEqual(t, next.Version, "0.2.0")
-	assertEqual(t, next.Previous != nil && *next.Previous == "0.1.0", true)
+	assertEqual(t, next.Previous, "0.1.0")
 }

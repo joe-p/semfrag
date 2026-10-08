@@ -1,18 +1,16 @@
 package semfrag
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
 )
 
+// GenerateOptions configures Generate.
 type GenerateOptions struct {
 	Dir    string
 	Output string
@@ -21,20 +19,23 @@ type GenerateOptions struct {
 	DryRun bool
 	Order  []string
 	Bump   map[string]BumpLevel
-	Types  SectionTypeMap
+	Types  SectionTypes
 }
 
+// GenerateResult reports what Generate produced. Level and Previous are empty
+// when there is no bump or no previous release.
 type GenerateResult struct {
 	Entry     string
 	Version   string
 	Title     string
-	Level     *BumpLevel
-	Previous  *string
+	Level     BumpLevel
+	Previous  string
 	Fragments []string
 	Written   bool
 	Cleared   []string
 }
 
+// PromoteChannel is a release channel a section can be promoted to.
 type PromoteChannel string
 
 const (
@@ -44,17 +45,15 @@ const (
 	ChannelRC     PromoteChannel = "rc"
 )
 
+// PromoteChannels lists the supported channels in ladder order.
 var PromoteChannels = []PromoteChannel{ChannelStable, ChannelAlpha, ChannelBeta, ChannelRC}
 
+// IsPromoteChannel reports whether value is a supported channel.
 func IsPromoteChannel(value string) bool {
-	for _, channel := range PromoteChannels {
-		if string(channel) == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(PromoteChannels, PromoteChannel(value))
 }
 
+// promoteSources lists the release states each channel accepts.
 var promoteSources = map[PromoteChannel][]string{
 	ChannelStable: {"unreleased", "alpha", "beta", "rc"},
 	ChannelAlpha:  {"unreleased"},
@@ -62,38 +61,45 @@ var promoteSources = map[PromoteChannel][]string{
 	ChannelRC:     {"unreleased", "alpha", "beta"},
 }
 
+// PromoteOptions configures Promote.
 type PromoteOptions struct {
 	Output  string
 	Dir     string
 	Channel PromoteChannel
 	DryRun  bool
 	Order   []string
-	Types   SectionTypeMap
+	Types   SectionTypes
 	Now     time.Time
 }
 
+// PromoteResult reports the promoted version.
 type PromoteResult struct {
 	Version string
 	Written bool
 }
 
+// LatestOptions configures Latest.
 type LatestOptions struct {
 	Output string
 }
 
+// LatestResult reports the latest released version.
 type LatestResult struct {
 	Version string
 }
 
+// NotesOptions configures Notes.
 type NotesOptions struct {
 	Output string
 }
 
+// NotesResult reports the latest release's notes.
 type NotesResult struct {
 	Version string
 	Notes   string
 }
 
+// InitOptions configures Init.
 type InitOptions struct {
 	Output  string
 	Dir     string
@@ -102,6 +108,7 @@ type InitOptions struct {
 	DryRun  bool
 }
 
+// InitResult reports what Init created.
 type InitResult struct {
 	Version       string
 	Title         string
@@ -112,8 +119,10 @@ type InitResult struct {
 	Written       bool
 }
 
+// DefaultInitialVersion is used when Init is not given a version.
 const DefaultInitialVersion = "1.0.0"
 
+// renameFile is a test seam for atomicWrite.
 var renameFile = os.Rename
 
 func fileExists(path string) bool {
@@ -137,46 +146,42 @@ func listFragments(dir string) ([]string, error) {
 			names = append(names, name)
 		}
 	}
-	sort.Slice(names, func(i, j int) bool { return names[i] < names[j] })
+	slices.Sort(names)
 	return names, nil
 }
 
-func randomID() string {
-	buffer := make([]byte, 16)
-	if _, err := rand.Read(buffer); err != nil {
-		return fmt.Sprintf("%d", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(buffer)
-}
-
-func atomicWrite(file, content string) error {
-	destination := file
-	if fileExists(file) {
-		resolved, err := filepath.EvalSymlinks(file)
+// atomicWrite writes content to path via a temporary file and rename, following
+// symlinks and preserving the destination's permissions.
+func atomicWrite(path, content string) error {
+	destination := path
+	if fileExists(path) {
+		resolved, err := filepath.EvalSymlinks(path)
 		if err != nil {
 			return err
 		}
 		destination = resolved
 	} else {
-		absolute, err := filepath.Abs(file)
+		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return err
 		}
 		destination = absolute
 	}
 
-	temporary := filepath.Join(
-		filepath.Dir(destination),
-		fmt.Sprintf(".%s.%s.tmp", filepath.Base(destination), randomID()),
-	)
-	defer os.Remove(temporary)
-
-	perm := fs.FileMode(0o666)
+	perm := os.FileMode(0o666)
 	if info, err := os.Stat(destination); err == nil {
 		perm = info.Mode().Perm()
 	}
-	handle, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+
+	handle, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".*.tmp")
 	if err != nil {
+		return err
+	}
+	temporary := handle.Name()
+	defer os.Remove(temporary)
+
+	if err := handle.Chmod(perm); err != nil {
+		handle.Close()
 		return err
 	}
 	if _, err := handle.WriteString(content); err != nil {
@@ -189,19 +194,22 @@ func atomicWrite(file, content string) error {
 	return renameFile(temporary, destination)
 }
 
+// withPreamble places preamble before content, normalizing the separator.
 func withPreamble(preamble, content string) string {
 	if preamble == "" {
 		return content
 	}
 	separator := "\n\n"
-	if strings.HasSuffix(preamble, "\n\n") {
+	switch {
+	case strings.HasSuffix(preamble, "\n\n"):
 		separator = ""
-	} else if strings.HasSuffix(preamble, "\n") {
+	case strings.HasSuffix(preamble, "\n"):
 		separator = "\n"
 	}
 	return preamble + separator + content
 }
 
+// ReadFragments reads the fragment files in dir, sorted by name.
 func ReadFragments(dir string) ([]Fragment, error) {
 	names, err := listFragments(dir)
 	if err != nil {
@@ -218,6 +226,8 @@ func ReadFragments(dir string) ([]Fragment, error) {
 	return fragments, nil
 }
 
+// Init creates an unreleased changelog, the fragments directory and, unless it
+// already exists, a default config.
 func Init(options InitOptions) (InitResult, error) {
 	requested := options.Version
 	if requested == "" {
@@ -228,18 +238,17 @@ func Init(options InitOptions) (InitResult, error) {
 		return InitResult{}, err
 	}
 	if parsed.Prerelease != "" || parsed.Build != "" {
-		return InitResult{}, fmt.Errorf(`Invalid initial version: %q. Expected a plain MAJOR.MINOR.PATCH version.`, requested)
+		return InitResult{}, fmt.Errorf("invalid initial version %q, expected a plain MAJOR.MINOR.PATCH version", requested)
 	}
 	if fileExists(options.Output) {
-		return InitResult{}, fmt.Errorf("%s already exists. Remove it first or choose another output.", options.Output)
+		return InitResult{}, fmt.Errorf("%s already exists, remove it first or choose another output", options.Output)
 	}
 
 	version, err := BaseVersion(requested)
 	if err != nil {
 		return InitResult{}, err
 	}
-	title := fmt.Sprintf("%s - %s", version, UnreleasedMarker)
-	entry := RenderChangelog(nil, title)
+	title := version + " - " + UnreleasedMarker
 	configPath := options.Config
 	if configPath == "" {
 		configPath = DefaultConfigFile
@@ -250,7 +259,7 @@ func Init(options InitOptions) (InitResult, error) {
 		if err := os.MkdirAll(options.Dir, 0o777); err != nil {
 			return InitResult{}, err
 		}
-		if err := atomicWrite(options.Output, entry); err != nil {
+		if err := atomicWrite(options.Output, RenderChangelog(nil, title)); err != nil {
 			return InitResult{}, err
 		}
 		if configWritten {
@@ -279,30 +288,27 @@ func Init(options InitOptions) (InitResult, error) {
 	}, nil
 }
 
-func SelectBump(sections []Section, bump map[string]BumpLevel) (BumpLevel, bool) {
-	levels := []BumpLevel{}
+// SelectBump returns the most significant bump among the given sections, or ""
+// when none of them bump.
+func SelectBump(sections []Section, bump map[string]BumpLevel) BumpLevel {
+	levels := make([]BumpLevel, 0, len(sections))
 	for _, section := range sections {
-		if level, ok := bump[section.Title]; ok && level != "" {
+		if level := bump[section.Title]; level != "" {
 			levels = append(levels, level)
 		}
 	}
 	return HighestBump(levels)
 }
 
-func resolveNextVersion(blocks []VersionBlock, sections []Section, bump map[string]BumpLevel) (string, *BumpLevel, *string, error) {
-	level, hasLevel := SelectBump(sections, bump)
-	var levelPtr *BumpLevel
-	if hasLevel {
-		value := level
-		levelPtr = &value
-	}
+// resolveNextVersion computes the next version, its bump level and the previous
+// release from the parsed blocks and pending sections.
+func resolveNextVersion(blocks []VersionBlock, sections []Section, bump map[string]BumpLevel) (string, BumpLevel, string, error) {
+	level := SelectBump(sections, bump)
 
 	lastReleased := ""
-	foundReleased := false
 	for _, block := range blocks {
 		if !block.Unreleased && !IsPrerelease(block.Version) {
 			lastReleased = block.Version
-			foundReleased = true
 			break
 		}
 	}
@@ -312,13 +318,14 @@ func resolveNextVersion(blocks []VersionBlock, sections []Section, bump map[stri
 		if IsPrerelease(block.Version) {
 			base, err := BaseVersion(block.Version)
 			if err != nil {
-				return "", nil, nil, err
+				return "", "", "", err
 			}
 			prereleaseBases = append(prereleaseBases, base)
 		}
 	}
 
-	if !foundReleased {
+	if lastReleased == "" {
+		// The initial version stays fixed until it is released.
 		base := DefaultInitialVersion
 		for _, block := range blocks {
 			if block.Unreleased {
@@ -328,23 +335,24 @@ func resolveNextVersion(blocks []VersionBlock, sections []Section, bump map[stri
 		}
 		version, err := HighestBase(append([]string{base}, prereleaseBases...)...)
 		if err != nil {
-			return "", nil, nil, err
+			return "", "", "", err
 		}
-		return version, levelPtr, nil, nil
+		return version, level, "", nil
 	}
 
-	bumped, err := NextVersion(lastReleased, levelPtr)
+	bumped, err := NextVersion(lastReleased, level)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", "", err
 	}
 	version, err := HighestBase(append([]string{bumped}, prereleaseBases...)...)
 	if err != nil {
-		return "", nil, nil, err
+		return "", "", "", err
 	}
-	previous := lastReleased
-	return version, levelPtr, &previous, nil
+	return version, level, lastReleased, nil
 }
 
+// Generate merges pending fragments into an unreleased section and prepends it
+// to the changelog.
 func Generate(options GenerateOptions) (GenerateResult, error) {
 	fragments, err := ReadFragments(options.Dir)
 	if err != nil {
@@ -358,10 +366,9 @@ func Generate(options GenerateOptions) (GenerateResult, error) {
 	toStdout := options.Output == "-"
 	input := options.Input
 	if input == "" {
+		input = options.Output
 		if toStdout {
 			input = "CHANGELOG.md"
-		} else {
-			input = options.Output
 		}
 	}
 	existing := ""
@@ -373,13 +380,14 @@ func Generate(options GenerateOptions) (GenerateResult, error) {
 		existing = string(data)
 	}
 
-	preamble, blocks, err := ParseChangelogDocument(existing, options.Types)
+	document, err := ParseChangelogDocument(existing, options.Types)
 	if err != nil {
 		return GenerateResult{}, err
 	}
+	blocks := document.Blocks
 	for i := 1; i < len(blocks); i++ {
 		if blocks[i].Unreleased {
-			return GenerateResult{}, fmt.Errorf("An UNRELEASED section must appear only at the top of the changelog.")
+			return GenerateResult{}, fmt.Errorf("an UNRELEASED section must appear only at the top of the changelog")
 		}
 	}
 
@@ -397,63 +405,55 @@ func Generate(options GenerateOptions) (GenerateResult, error) {
 	}
 
 	if len(sections) == 0 {
-		var previous *string
+		previous := ""
 		for _, block := range blocks {
 			if !block.Unreleased {
-				value := block.Version
-				previous = &value
+				previous = block.Version
 				break
 			}
 		}
-		return GenerateResult{
-			Entry:     "",
-			Version:   "",
-			Title:     "",
-			Level:     nil,
-			Previous:  previous,
-			Fragments: names,
-			Written:   false,
-			Cleared:   []string{},
-		}, nil
+		return GenerateResult{Fragments: names, Previous: previous, Cleared: []string{}}, nil
 	}
 
 	version, level, previous, err := resolveNextVersion(blocks, sections, options.Bump)
 	if err != nil {
 		return GenerateResult{}, err
 	}
-	title := fmt.Sprintf("%s - %s", version, UnreleasedMarker)
+	title := version + " - " + UnreleasedMarker
 	entry := RenderChangelog(sections, title)
 
-	remainderParts := []string{}
+	remainder := make([]string, 0, len(blocks))
 	for _, block := range blocks {
 		if !block.Unreleased {
-			remainderParts = append(remainderParts, block.Raw)
+			remainder = append(remainder, block.Raw)
 		}
 	}
-	remainder := strings.Join(remainderParts, "\n\n")
 
 	written := !options.DryRun && !toStdout
 	if written {
-		if err := atomicWrite(options.Output, withPreamble(preamble, PrependChangelog(remainder, entry))); err != nil {
+		content := withPreamble(document.Preamble, PrependChangelog(strings.Join(remainder, "\n\n"), entry))
+		if err := atomicWrite(options.Output, content); err != nil {
 			return GenerateResult{}, err
 		}
 	}
 
 	cleared := []string{}
-	if options.Clear && written && len(names) > 0 {
+	if options.Clear && written {
 		for _, fragment := range fragments {
-			file := filepath.Join(options.Dir, fragment.Name)
-			current, err := os.ReadFile(file)
+			path := filepath.Join(options.Dir, fragment.Name)
+			current, err := os.ReadFile(path)
 			if err != nil {
 				if os.IsNotExist(err) {
 					continue
 				}
 				return GenerateResult{}, err
 			}
+			// Keep fragments edited since the snapshot; a later generate can
+			// consume them.
 			if string(current) != fragment.Content {
 				continue
 			}
-			if err := os.Remove(file); err != nil {
+			if err := os.Remove(path); err != nil {
 				return GenerateResult{}, err
 			}
 			cleared = append(cleared, fragment.Name)
@@ -472,6 +472,7 @@ func Generate(options GenerateOptions) (GenerateResult, error) {
 	}, nil
 }
 
+// currentChannel names the release state of a block for promotion checks.
 func currentChannel(block VersionBlock) string {
 	if block.Unreleased {
 		return "unreleased"
@@ -480,22 +481,23 @@ func currentChannel(block VersionBlock) string {
 	if prerelease == "" {
 		return "stable"
 	}
-	match := prereleaseNumRe.FindStringSubmatch(prerelease)
-	if match != nil {
+	if match := prereleaseNumRe.FindStringSubmatch(prerelease); match != nil {
 		return match[1]
 	}
 	return prerelease
 }
 
+// Promote moves the top section to a release on the given channel.
 func Promote(options PromoteOptions) (PromoteResult, error) {
 	data, err := os.ReadFile(options.Output)
 	if err != nil {
 		return PromoteResult{}, err
 	}
-	preamble, blocks, err := ParseChangelogDocument(string(data), options.Types)
+	document, err := ParseChangelogDocument(string(data), options.Types)
 	if err != nil {
 		return PromoteResult{}, err
 	}
+	blocks := document.Blocks
 
 	dir := options.Dir
 	if dir == "" {
@@ -506,22 +508,21 @@ func Promote(options PromoteOptions) (PromoteResult, error) {
 		return PromoteResult{}, err
 	}
 	if len(pending) > 0 {
-		return PromoteResult{}, fmt.Errorf("Cannot promote: %s still contains %d pending fragment(s). Run generate first.", dir, len(pending))
+		return PromoteResult{}, fmt.Errorf("cannot promote: %s still contains %d pending fragment(s), run generate first", dir, len(pending))
 	}
 
 	if len(blocks) == 0 {
-		return PromoteResult{}, fmt.Errorf("No version to promote in %s.", options.Output)
+		return PromoteResult{}, fmt.Errorf("no version to promote in %s", options.Output)
 	}
-	top := blocks[0]
-	current := currentChannel(top)
-	if !contains(promoteSources[options.Channel], current) {
-		return PromoteResult{}, fmt.Errorf("Cannot promote %s to %s in %s.", current, options.Channel, options.Output)
+	current := currentChannel(blocks[0])
+	if !slices.Contains(promoteSources[options.Channel], current) {
+		return PromoteResult{}, fmt.Errorf("cannot promote %s to %s in %s", current, options.Channel, options.Output)
 	}
 
 	if options.Channel == ChannelStable {
-		return promoteStable(options, blocks, preamble)
+		return promoteStable(options, document)
 	}
-	return promotePrerelease(options, blocks, options.Channel, preamble)
+	return promotePrerelease(options, document, options.Channel)
 }
 
 func latestReleased(blocks []VersionBlock, output string) (VersionBlock, error) {
@@ -530,81 +531,78 @@ func latestReleased(blocks []VersionBlock, output string) (VersionBlock, error) 
 			return block, nil
 		}
 	}
-	return VersionBlock{}, fmt.Errorf("No released version found in %s.", output)
+	return VersionBlock{}, fmt.Errorf("no released version found in %s", output)
 }
 
+// Latest returns the most recent released version in the changelog.
 func Latest(options LatestOptions) (LatestResult, error) {
 	data, err := os.ReadFile(options.Output)
 	if err != nil {
 		return LatestResult{}, err
 	}
-	_, blocks, err := ParseChangelogDocument(string(data), nil)
+	document, err := ParseChangelogDocument(string(data), nil)
 	if err != nil {
 		return LatestResult{}, err
 	}
-	released, err := latestReleased(blocks, options.Output)
+	released, err := latestReleased(document.Blocks, options.Output)
 	if err != nil {
 		return LatestResult{}, err
 	}
 	return LatestResult{Version: released.Version}, nil
 }
 
+// Notes returns the body of the most recent release, without its heading.
 func Notes(options NotesOptions) (NotesResult, error) {
 	data, err := os.ReadFile(options.Output)
 	if err != nil {
 		return NotesResult{}, err
 	}
-	_, blocks, err := ParseChangelogDocument(string(data), nil)
+	document, err := ParseChangelogDocument(string(data), nil)
 	if err != nil {
 		return NotesResult{}, err
 	}
-	released, err := latestReleased(blocks, options.Output)
+	released, err := latestReleased(document.Blocks, options.Output)
 	if err != nil {
 		return NotesResult{}, err
 	}
 	lines := strings.Split(released.Raw, "\n")
-	notes := strings.Join(lines[1:], "\n")
-	notes = strings.TrimLeft(notes, "\n")
+	notes := strings.TrimLeft(strings.Join(lines[1:], "\n"), "\n")
 	notes = strings.TrimRightFunc(notes, unicode.IsSpace)
 	return NotesResult{Version: released.Version, Notes: notes}, nil
 }
 
-func promotePrerelease(options PromoteOptions, blocks []VersionBlock, channel PromoteChannel, preamble string) (PromoteResult, error) {
-	top := blocks[0]
+func promotePrerelease(options PromoteOptions, document ChangelogDocument, channel PromoteChannel) (PromoteResult, error) {
+	top := document.Blocks[0]
 	if _, err := ParseVersion(top.Version); err != nil {
 		return PromoteResult{}, err
 	}
-	versions := make([]string, len(blocks))
-	for i, block := range blocks {
+	versions := make([]string, len(document.Blocks))
+	for i, block := range document.Blocks {
 		versions[i] = block.Version
 	}
 	version, err := NextPrerelease(top.Version, string(channel), versions)
 	if err != nil {
 		return PromoteResult{}, err
 	}
-	now := options.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	title := fmt.Sprintf("%s - %s", version, FormatReleaseDate(now))
+	title := version + " - " + FormatReleaseDate(releaseTime(options.Now))
 	entry := RenderChangelog(top.Sections, title)
-	remainderParts := []string{}
-	for i := 1; i < len(blocks); i++ {
-		remainderParts = append(remainderParts, blocks[i].Raw)
+	remainder := make([]string, 0, len(document.Blocks)-1)
+	for _, block := range document.Blocks[1:] {
+		remainder = append(remainder, block.Raw)
 	}
-	remainder := strings.Join(remainderParts, "\n\n")
 
 	if !options.DryRun {
-		if err := atomicWrite(options.Output, withPreamble(preamble, PrependChangelog(remainder, entry))); err != nil {
+		content := withPreamble(document.Preamble, PrependChangelog(strings.Join(remainder, "\n\n"), entry))
+		if err := atomicWrite(options.Output, content); err != nil {
 			return PromoteResult{}, err
 		}
 	}
 	return PromoteResult{Version: version, Written: !options.DryRun}, nil
 }
 
-func promoteStable(options PromoteOptions, blocks []VersionBlock, preamble string) (PromoteResult, error) {
-	top := blocks[0]
-	base, err := BaseVersion(top.Version)
+func promoteStable(options PromoteOptions, document ChangelogDocument) (PromoteResult, error) {
+	blocks := document.Blocks
+	base, err := BaseVersion(blocks[0].Version)
 	if err != nil {
 		return PromoteResult{}, err
 	}
@@ -636,21 +634,25 @@ func promoteStable(options PromoteOptions, blocks []VersionBlock, preamble strin
 		return PromoteResult{}, err
 	}
 
-	now := options.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	entry := RenderChangelog(sections, fmt.Sprintf("%s - %s", base, FormatReleaseDate(now)))
-	remainderParts := []string{}
+	title := base + " - " + FormatReleaseDate(releaseTime(options.Now))
+	entry := RenderChangelog(sections, title)
+	remainder := make([]string, 0, len(blocks)-index)
 	for _, block := range blocks[index:] {
-		remainderParts = append(remainderParts, block.Raw)
+		remainder = append(remainder, block.Raw)
 	}
-	remainder := strings.Join(remainderParts, "\n\n")
 
 	if !options.DryRun {
-		if err := atomicWrite(options.Output, withPreamble(preamble, PrependChangelog(remainder, entry))); err != nil {
+		content := withPreamble(document.Preamble, PrependChangelog(strings.Join(remainder, "\n\n"), entry))
+		if err := atomicWrite(options.Output, content); err != nil {
 			return PromoteResult{}, err
 		}
 	}
 	return PromoteResult{Version: base, Written: !options.DryRun}, nil
+}
+
+func releaseTime(now time.Time) time.Time {
+	if now.IsZero() {
+		return time.Now()
+	}
+	return now
 }

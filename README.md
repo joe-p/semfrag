@@ -572,7 +572,7 @@ func main() {
 			"Fixes":            semfrag.BumpPatch,
 			"Features":         semfrag.BumpMinor,
 		},
-		Types: semfrag.SectionTypeMap{"Upgrade Guide": semfrag.SectionTypeRaw},
+		Types: semfrag.SectionTypes{"Upgrade Guide": semfrag.SectionRaw},
 	})
 
 	_, _ = semfrag.Promote(semfrag.PromoteOptions{Output: "CHANGELOG.md", Dir: "changelog.d", Channel: semfrag.ChannelStable})
@@ -582,7 +582,7 @@ func main() {
 	notes, _ := semfrag.Notes(semfrag.NotesOptions{Output: "CHANGELOG.md"})
 	fmt.Println(latest.Version, notes.Notes)
 
-	blocks, _ := semfrag.ParseChangelog("# 1.0.0\n\n## Features\n\n- hello\n", semfrag.SectionTypeMap{"Features": semfrag.SectionTypeList})
+	blocks, _ := semfrag.ParseChangelog("# 1.0.0\n\n## Features\n\n- hello\n", semfrag.SectionTypes{"Features": semfrag.SectionList})
 	_ = blocks
 }
 ```

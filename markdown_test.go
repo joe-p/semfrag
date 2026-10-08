@@ -15,7 +15,7 @@ func TestParseFragmentSplitsSections(t *testing.T) {
 
 func TestParseFragmentRejectsContentBeforeHeading(t *testing.T) {
 	_, err := ParseFragment("intro\n\n## Fixes\n\n- a\n", nil)
-	assertErrorContains(t, err, "Line 1: expected a ## section heading")
+	assertErrorContains(t, err, "line 1: expected a ## section heading")
 }
 
 func TestMergingKeepsMultilineItemsAndDeduplicates(t *testing.T) {
@@ -58,7 +58,7 @@ func TestChangelogTitleAndIntroductionAreNotBlocks(t *testing.T) {
 
 func TestFencedHeadingsRemainRawContent(t *testing.T) {
 	content := "# 1.0.0\n\n## Details\n\n```md\n# Example\n## Example section\n```\n"
-	blocks, err := ParseChangelog(content, SectionTypeMap{"Details": SectionTypeRaw})
+	blocks, err := ParseChangelog(content, SectionTypes{"Details": SectionRaw})
 	if err != nil {
 		t.Fatalf("ParseChangelog returned error: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestFencedHeadingsRemainRawContent(t *testing.T) {
 func TestParseFragmentPreservesRawMarkdown(t *testing.T) {
 	sections, err := ParseFragment(
 		"## Details\n\nSome intro.\n\n### Nested\n\n- item\n\n```js\nconst a = 1;\n```\n",
-		SectionTypeMap{"Details": SectionTypeRaw},
+		SectionTypes{"Details": SectionRaw},
 	)
 	if err != nil {
 		t.Fatalf("ParseFragment returned error: %v", err)
@@ -77,7 +77,7 @@ func TestParseFragmentPreservesRawMarkdown(t *testing.T) {
 	assertEqual(t, sections, []Section{
 		{
 			Title: "Details",
-			Type:  SectionTypeRaw,
+			Type:  SectionRaw,
 			Lines: []string{},
 			Body:  "Some intro.\n\n### Nested\n\n- item\n\n```js\nconst a = 1;\n```",
 		},
@@ -85,7 +85,7 @@ func TestParseFragmentPreservesRawMarkdown(t *testing.T) {
 }
 
 func TestParseFragmentRejectsHeadingsInRawSections(t *testing.T) {
-	_, err := ParseFragment("## Details\n\n# Nope\n", SectionTypeMap{"Details": SectionTypeRaw})
+	_, err := ParseFragment("## Details\n\n# Nope\n", SectionTypes{"Details": SectionRaw})
 	assertErrorContains(t, err, "may not contain a level-1 or level-2 heading")
 }
 
@@ -139,7 +139,7 @@ func TestMergeFragmentsFollowsConfiguredOrder(t *testing.T) {
 
 func TestMergeFragmentsThrowsOnUnknownSection(t *testing.T) {
 	_, err := MergeFragments([]Fragment{{Name: "a.md", Content: "## Chores\n\n- chore\n"}}, []string{"Fixes", "Features"}, nil)
-	assertErrorContains(t, err, `Unknown changelog section "## Chores"`)
+	assertErrorContains(t, err, `unknown changelog section "## Chores"`)
 }
 
 func TestRenderChangelogProducesExpectedMarkdown(t *testing.T) {
@@ -169,19 +169,19 @@ func TestMergeSectionsGroupsByTitleAndDropsDuplicateLines(t *testing.T) {
 
 func TestMergeSectionsConcatenatesRawBodies(t *testing.T) {
 	merged, err := MergeSections([][]Section{
-		{{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "one"}},
-		{{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "two"}},
-		{{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "one"}},
+		{{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "one"}},
+		{{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "two"}},
+		{{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "one"}},
 	}, nil, nil)
 	if err != nil {
 		t.Fatalf("MergeSections returned error: %v", err)
 	}
-	assertEqual(t, merged, []Section{{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "one\n\ntwo"}})
+	assertEqual(t, merged, []Section{{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "one\n\ntwo"}})
 }
 
 func TestRenderChangelogRendersRawSectionsVerbatim(t *testing.T) {
 	output := RenderChangelog(
-		[]Section{{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "Some intro.\n\n### Nested\n\n- item"}},
+		[]Section{{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "Some intro.\n\n### Nested\n\n- item"}},
 		"Unreleased",
 	)
 	assertEqual(t, output, "# Unreleased\n\n## Details\n\nSome intro.\n\n### Nested\n\n- item\n")
@@ -232,11 +232,11 @@ func TestParseChangelogPreservesRawBlockText(t *testing.T) {
 }
 
 func TestParseChangelogPreservesRawSectionsWithTypes(t *testing.T) {
-	blocks, err := ParseChangelog("# 1.0.0\n\n## Details\n\nIntro.\n\n### Nested\n\n- x\n", SectionTypeMap{"Details": SectionTypeRaw})
+	blocks, err := ParseChangelog("# 1.0.0\n\n## Details\n\nIntro.\n\n### Nested\n\n- x\n", SectionTypes{"Details": SectionRaw})
 	if err != nil {
 		t.Fatalf("ParseChangelog returned error: %v", err)
 	}
 	assertEqual(t, blocks[0].Sections, []Section{
-		{Title: "Details", Type: SectionTypeRaw, Lines: []string{}, Body: "Intro.\n\n### Nested\n\n- x"},
+		{Title: "Details", Type: SectionRaw, Lines: []string{}, Body: "Intro.\n\n### Nested\n\n- x"},
 	})
 }

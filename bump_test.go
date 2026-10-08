@@ -32,7 +32,7 @@ func TestParseVersionRejectsInvalidVersions(t *testing.T) {
 		"9007199254740992.0.0",
 	} {
 		_, err := ParseVersion(version)
-		assertErrorContains(t, err, "Invalid semantic version")
+		assertErrorContains(t, err, "invalid semantic version")
 	}
 	parsed, err := ParseVersion("1.2.3+build.01")
 	if err != nil {
@@ -50,11 +50,11 @@ func TestCustomDottedPrereleaseChannels(t *testing.T) {
 
 	for _, channel := range []string{"", "bad channel", "alpha..test", "alpha+build", "01"} {
 		_, err := NextPrerelease("1.2.3", channel, []string{})
-		assertErrorContains(t, err, "Invalid")
+		assertErrorContains(t, err, "invalid")
 	}
 
-	_, err = ApplyBump("9007199254740991.0.0", "MAJOR")
-	assertErrorContains(t, err, "Invalid semantic version")
+	_, err = ApplyBump("9007199254740991.0.0", BumpMajor)
+	assertErrorContains(t, err, "invalid semantic version")
 }
 
 func TestApplyBump(t *testing.T) {
@@ -83,26 +83,19 @@ func TestIsBumpLevel(t *testing.T) {
 }
 
 func TestHighestBump(t *testing.T) {
-	got, ok := HighestBump([]BumpLevel{BumpPatch, BumpMinor, BumpPatch})
-	assertEqual(t, ok, true)
-	assertEqual(t, got, BumpMinor)
-
-	got, ok = HighestBump([]BumpLevel{BumpPatch, BumpMajor, BumpMinor})
-	assertEqual(t, ok, true)
-	assertEqual(t, got, BumpMajor)
-
-	_, ok = HighestBump([]BumpLevel{})
-	assertEqual(t, ok, false)
+	assertEqual(t, HighestBump([]BumpLevel{BumpPatch, BumpMinor, BumpPatch}), BumpMinor)
+	assertEqual(t, HighestBump([]BumpLevel{BumpPatch, BumpMajor, BumpMinor}), BumpMajor)
+	assertEqual(t, HighestBump([]BumpLevel{}), BumpLevel(""))
 }
 
 func TestNextVersion(t *testing.T) {
-	got, err := NextVersion("1.2.3", bumpPtr(BumpMinor))
+	got, err := NextVersion("1.2.3", BumpMinor)
 	if err != nil {
 		t.Fatalf("NextVersion returned error: %v", err)
 	}
 	assertEqual(t, got, "1.3.0")
 
-	got, err = NextVersion("1.2.3", nil)
+	got, err = NextVersion("1.2.3", "")
 	if err != nil {
 		t.Fatalf("NextVersion returned error: %v", err)
 	}

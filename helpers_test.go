@@ -22,7 +22,3 @@ func assertErrorContains(t *testing.T, err error, substr string) {
 		t.Fatalf("expected error containing %q, got %q", substr, err.Error())
 	}
 }
-
-func bumpPtr(level BumpLevel) *BumpLevel {
-	return &level
-}

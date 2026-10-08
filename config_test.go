@@ -19,8 +19,8 @@ func TestParseConfigReadsSectionsAndNormalizesBumps(t *testing.T) {
 		{Title: "Features", Bump: BumpMinor},
 		{Title: "Docs"},
 	}})
-	assertEqual(t, SectionOrder(config), []string{"Fixes", "Features", "Docs"})
-	assertEqual(t, SectionBumps(config), map[string]BumpLevel{"Fixes": BumpPatch, "Features": BumpMinor})
+	assertEqual(t, config.Order(), []string{"Fixes", "Features", "Docs"})
+	assertEqual(t, config.Bumps(), map[string]BumpLevel{"Fixes": BumpPatch, "Features": BumpMinor})
 }
 
 func TestParseConfigReadsAndNormalizesSectionTypes(t *testing.T) {
@@ -33,9 +33,9 @@ func TestParseConfigReadsAndNormalizesSectionTypes(t *testing.T) {
 	}
 	assertEqual(t, config, ChangelogConfig{Sections: []SectionConfig{
 		{Title: "Fixes", Bump: BumpPatch},
-		{Title: "Details", Type: SectionTypeRaw},
+		{Title: "Details", Type: SectionRaw},
 	}})
-	assertEqual(t, SectionTypes(config), SectionTypeMap{"Details": SectionTypeRaw})
+	assertEqual(t, config.Types(), SectionTypes{"Details": SectionRaw})
 }
 
 func TestParseConfigRejectsInvalidBumpLevels(t *testing.T) {
@@ -79,7 +79,7 @@ func TestParseConfigRejectsDuplicateSections(t *testing.T) {
 
 func TestLoadConfigReportsMissingFile(t *testing.T) {
 	_, err := LoadConfig(filepath.Join(t.TempDir(), "missing.json"))
-	assertErrorContains(t, err, "Config file not found")
+	assertErrorContains(t, err, "config file not found")
 }
 
 func TestLoadConfigReadsFileFromDisk(t *testing.T) {
