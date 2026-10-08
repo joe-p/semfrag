@@ -31,14 +31,14 @@ func IsBumpLevel(value string) bool {
 // ParsedVersion is a semantic version split into its components. Prerelease and
 // Build are empty when the version does not carry them.
 type ParsedVersion struct {
-	Major      int
-	Minor      int
-	Patch      int
+	Major      uint64
+	Minor      uint64
+	Patch      uint64
 	Prerelease string
 	Build      string
 }
 
-const maxSafeInteger = 9007199254740991
+const maxSafeInteger uint64 = 9007199254740991
 
 var (
 	versionRe       = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
@@ -51,8 +51,8 @@ func invalidVersion(version string) error {
 	return fmt.Errorf("invalid semantic version: %q, expected MAJOR.MINOR.PATCH", version)
 }
 
-func safeInteger(part string) (int, bool) {
-	value, err := strconv.Atoi(part)
+func safeInteger(part string) (uint64, bool) {
+	value, err := strconv.ParseUint(part, 10, 64)
 	if err != nil || value > maxSafeInteger {
 		return 0, false
 	}
@@ -143,7 +143,7 @@ func checkedVersion(version string) (string, error) {
 }
 
 // PrereleaseVersion tags base with channel and number, e.g. 1.2.3-alpha.1.
-func PrereleaseVersion(base, channel string, number int) (string, error) {
+func PrereleaseVersion(base, channel string, number uint64) (string, error) {
 	if !channelRe.MatchString(channel) || number < 1 || number > maxSafeInteger {
 		return "", errors.New("invalid prerelease channel or number")
 	}
@@ -161,7 +161,7 @@ func NextPrerelease(base, channel string, versions []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	highest := 0
+	var highest uint64
 
 	for _, version := range versions {
 		prerelease := PrereleaseOf(version)
@@ -176,7 +176,7 @@ func NextPrerelease(base, channel string, versions []string) (string, error) {
 		if match == nil || match[1] != channel {
 			continue
 		}
-		if number, _ := strconv.Atoi(match[2]); number > highest {
+		if number, _ := strconv.ParseUint(match[2], 10, 64); number > highest {
 			highest = number
 		}
 	}
