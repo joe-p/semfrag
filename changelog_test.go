@@ -576,6 +576,14 @@ func TestFailedAtomicReplacementLeavesOriginalIntact(t *testing.T) {
 	assertEqual(t, readDir(t, root), []string{"CHANGELOG.md", "changelog.d"})
 }
 
+func TestPromoteChannelsReturnsIndependentSlices(t *testing.T) {
+	channels := PromoteChannels()
+	channels[0] = "custom"
+	assertEqual(t, IsPromoteChannel("custom"), false)
+	assertEqual(t, IsPromoteChannel("stable"), true)
+	assertEqual(t, PromoteChannels()[0], ChannelStable)
+}
+
 func TestInitCreatesUnreleasedChangelogConfigAndDirectory(t *testing.T) {
 	_, dir, output, config := makeInitRoot(t)
 

@@ -47,16 +47,16 @@ chmod +x semfrag
 
 The available assets are:
 
-| Target             | Asset                       |
+| Target | Asset |
 | ------------------ | --------------------------- |
-| Linux x64          | `semfrag-linux-x64`         |
-| Linux x64 (musl)   | `semfrag-linux-x64-musl`    |
-| Linux arm64        | `semfrag-linux-arm64`       |
-| Linux arm64 (musl) | `semfrag-linux-arm64-musl`  |
-| macOS x64          | `semfrag-darwin-x64`        |
-| macOS arm64        | `semfrag-darwin-arm64`      |
-| Windows x64        | `semfrag-windows-x64.exe`   |
-| Windows arm64      | `semfrag-windows-arm64.exe` |
+| Linux x64 | `semfrag-linux-x64` |
+| Linux x64 (musl) | `semfrag-linux-x64-musl` |
+| Linux arm64 | `semfrag-linux-arm64` |
+| Linux arm64 (musl) | `semfrag-linux-arm64-musl` |
+| macOS x64 | `semfrag-darwin-x64` |
+| macOS arm64 | `semfrag-darwin-arm64` |
+| Windows x64 | `semfrag-windows-x64.exe` |
+| Windows arm64 | `semfrag-windows-arm64.exe` |
 
 ## Usage
 
@@ -259,11 +259,11 @@ released, and fails if the changelog has no released version yet.
 Promotions move forward along the `alpha` -> `beta` -> `rc` -> `stable` ladder,
 so each channel only accepts certain top sections:
 
-| Command          | Accepted top section            |
+| Command | Accepted top section |
 | ---------------- | ------------------------------- |
-| `promote alpha`  | `UNRELEASED`                    |
-| `promote beta`   | `UNRELEASED` or an alpha        |
-| `promote rc`     | `UNRELEASED`, alpha or beta     |
+| `promote alpha` | `UNRELEASED` |
+| `promote beta` | `UNRELEASED` or an alpha |
+| `promote rc` | `UNRELEASED`, alpha or beta |
 | `promote stable` | `UNRELEASED`, alpha, beta or rc |
 
 Use `promote alpha` to tag the top unreleased section as a prerelease instead of
@@ -359,17 +359,17 @@ to read a different changelog. Stdout generation never clears fragments.
 `promote` additionally takes the target channel as a positional argument
 (`stable`, `alpha`, `beta` or `rc`).
 
-| Option                | Description                                                                                      |
+| Option | Description |
 | --------------------- | ------------------------------------------------------------------------------------------------ |
-| `-d, --dir <path>`    | Directory containing fragments (default: `changelog.d`)                                          |
-| `-o, --output <path>` | Changelog file, or `-` for stdout (default: `CHANGELOG.md`)                                      |
-| `--input <path>`      | `generate` only: existing changelog to read (default: output path, or `CHANGELOG.md` for stdout) |
-| `-c, --config <path>` | Config file to read or, for `init`, write (default: `semfrag.json`)                              |
-| `--initial <version>` | `init` only: starting version, e.g. `0.1.0` or `1.0.0` (default: `1.0.0`)                        |
-| `--dry-run`           | Print the result without writing or clearing                                                     |
-| `--no-clear`          | Keep fragment files after generating                                                             |
-| `-h, --help`          | Show help                                                                                        |
-| `-v, --version`       | Show the package version                                                                         |
+| `-d, --dir <path>` | Directory containing fragments (default: `changelog.d`) |
+| `-o, --output <path>` | Changelog file, or `-` for stdout (default: `CHANGELOG.md`) |
+| `--input <path>` | `generate` only: existing changelog to read (default: output path, or `CHANGELOG.md` for stdout) |
+| `-c, --config <path>` | Config file to read or, for `init`, write (default: `semfrag.json`) |
+| `--initial <version>` | `init` only: starting version, e.g. `0.1.0` or `1.0.0` (default: `1.0.0`) |
+| `--dry-run` | Print the result without writing or clearing |
+| `--no-clear` | Keep fragment files after generating |
+| `-h, --help` | Show help |
+| `-v, --version` | Show the package version |
 
 ## CI/CD
 
@@ -378,13 +378,13 @@ ships composite actions that handle the semfrag side of a release, leaving the
 language-specific steps (bumping a manifest, publishing a package) to you. They
 install the standalone binary, so no language runtime is needed.
 
-| Action                           | Description                                                                                                   |
+| Action | Description |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `joe-p/semfrag/actions/setup`    | Install the standalone `semfrag` binary and add it to `PATH`                                                  |
-| `joe-p/semfrag/actions/check`    | Validate fragments with `generate --dry-run`, and optionally require a fragment when matching paths change    |
-| `joe-p/semfrag/actions/prepare`  | Run `generate` and `promote`, and output `released`, `version`, `notes` and `notes-file`                      |
-| `joe-p/semfrag/actions/publish`  | Commit the release, push it, tag it and create a GitHub release with the notes, optionally uploading `assets` |
-| `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and restore the branch                                  |
+| `joe-p/semfrag/actions/setup` | Install the standalone `semfrag` binary and add it to `PATH` |
+| `joe-p/semfrag/actions/check` | Validate fragments with `generate --dry-run`, and optionally require a fragment when matching paths change |
+| `joe-p/semfrag/actions/prepare` | Run `generate` and `promote`, and output `released`, `version`, `notes` and `notes-file` |
+| `joe-p/semfrag/actions/publish` | Commit the release, push it, tag it and create a GitHub release with the notes, optionally uploading `assets` |
+| `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and restore the branch |
 
 The actions are not versioned separately yet, so reference them by the full
 commit SHA of a semfrag release, with the version as a comment. Every release
@@ -542,50 +542,6 @@ migrate up
 
 Replace `oldThing()` with `newThing()`.
 ````
-
-## Programmatic API
-
-```go
-package main
-
-import (
-	"fmt"
-
-	semfrag "github.com/joe-p/semfrag"
-)
-
-func main() {
-	_, _ = semfrag.Init(semfrag.InitOptions{
-		Output:  "CHANGELOG.md",
-		Dir:     "changelog.d",
-		Config:  "semfrag.json",
-		Version: "0.1.0",
-	})
-
-	_, _ = semfrag.Generate(semfrag.GenerateOptions{
-		Dir:    "changelog.d",
-		Output: "CHANGELOG.md",
-		Clear:  true,
-		Order:  []string{"Breaking Changes", "Fixes", "Features", "Upgrade Guide"},
-		Bump: map[string]semfrag.BumpLevel{
-			"Breaking Changes": semfrag.BumpMajor,
-			"Fixes":            semfrag.BumpPatch,
-			"Features":         semfrag.BumpMinor,
-		},
-		Types: semfrag.SectionTypes{"Upgrade Guide": semfrag.SectionRaw},
-	})
-
-	_, _ = semfrag.Promote(semfrag.PromoteOptions{Output: "CHANGELOG.md", Dir: "changelog.d", Channel: semfrag.ChannelStable})
-	_, _ = semfrag.Promote(semfrag.PromoteOptions{Output: "CHANGELOG.md", Dir: "changelog.d", Channel: semfrag.ChannelAlpha})
-
-	latest, _ := semfrag.Latest(semfrag.LatestOptions{Output: "CHANGELOG.md"})
-	notes, _ := semfrag.Notes(semfrag.NotesOptions{Output: "CHANGELOG.md"})
-	fmt.Println(latest.Version, notes.Notes)
-
-	blocks, _ := semfrag.ParseChangelog("# 1.0.0\n\n## Features\n\n- hello\n", semfrag.SectionTypes{"Features": semfrag.SectionList})
-	_ = blocks
-}
-```
 
 ## License
 

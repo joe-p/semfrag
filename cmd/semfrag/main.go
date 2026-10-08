@@ -316,8 +316,9 @@ func configSettings(config *semfrag.ChangelogConfig) ([]string, map[string]semfr
 }
 
 func joinChannels() string {
-	channels := make([]string, len(semfrag.PromoteChannels))
-	for i, channel := range semfrag.PromoteChannels {
+	supported := semfrag.PromoteChannels()
+	channels := make([]string, len(supported))
+	for i, channel := range supported {
 		channels[i] = string(channel)
 	}
 	return strings.Join(channels, ", ")
@@ -388,14 +389,20 @@ func parseLongOption(args *cliArgs, argv []string, i int, name string) (int, err
 			i = next
 		}
 		setStringOption(args, name, value)
-	case "dry-run":
-		args.dryRun = true
-	case "no-clear":
-		args.noClear = true
-	case "help":
-		args.help = true
-	case "version":
-		args.version = true
+	case "dry-run", "no-clear", "help", "version":
+		if hasValue {
+			return i, fmt.Errorf("option '--%s' does not take a value", name)
+		}
+		switch name {
+		case "dry-run":
+			args.dryRun = true
+		case "no-clear":
+			args.noClear = true
+		case "help":
+			args.help = true
+		case "version":
+			args.version = true
+		}
 	default:
 		return i, fmt.Errorf("unknown option '--%s'", name)
 	}
@@ -422,10 +429,15 @@ func parseShortOption(args *cliArgs, argv []string, i int, arg string) (int, err
 			i = next
 		}
 		setStringOption(args, shortOptionNames[name], value)
-	case 'h':
-		args.help = true
-	case 'v':
-		args.version = true
+	case 'h', 'v':
+		if hasValue {
+			return i, fmt.Errorf("option '-%c' does not take a value or support combined short options", name)
+		}
+		if name == 'h' {
+			args.help = true
+		} else {
+			args.version = true
+		}
 	default:
 		return i, fmt.Errorf("unknown option '-%c'", name)
 	}

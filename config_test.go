@@ -1,10 +1,53 @@
 package semfrag
 
 import (
+	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestParseConfigRejectsInvalidFieldShapes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"null document", `null`, "expected a JSON object"},
+		{"array document", `[]`, "expected a JSON object"},
+		{"null sections", `{"sections":null}`, `"sections" must be a non-empty array`},
+		{"object sections", `{"sections":{}}`, `"sections" must be a non-empty array`},
+		{"null section", `{"sections":[null]}`, "sections[0] must be an object"},
+		{"null title", `{"sections":[{"title":null}]}`, ".title must be a non-empty string"},
+		{"numeric title", `{"sections":[{"title":1}]}`, ".title must be a non-empty string"},
+		{"null bump", `{"sections":[{"title":"Fixes","bump":null}]}`, "invalid bump level"},
+		{"numeric bump", `{"sections":[{"title":"Fixes","bump":1}]}`, "invalid bump level"},
+		{"null type", `{"sections":[{"title":"Fixes","type":null}]}`, "invalid section type"},
+		{"object type", `{"sections":[{"title":"Fixes","type":{}}]}`, "invalid section type"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := ParseConfig(test.raw, "test")
+			assertErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestLoadConfigPreservesFilesystemErrors(t *testing.T) {
+	parent := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(parent, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := LoadConfig(filepath.Join(parent, "semfrag.json"))
+	if err == nil || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("expected filesystem error other than not-exist, got %v", err)
+	}
+	var pathErr *fs.PathError
+	if !errors.As(err, &pathErr) {
+		t.Fatalf("expected preserved PathError, got %v", err)
+	}
+}
 
 func TestParseConfigReadsSectionsAndNormalizesBumps(t *testing.T) {
 	config, err := ParseConfig(
@@ -51,6 +94,25 @@ func TestParseConfigRejectsInvalidSectionTypes(t *testing.T) {
 func TestParseConfigRejectsInvalidJSON(t *testing.T) {
 	_, err := ParseConfig("{oops", "test")
 	assertErrorContains(t, err, "test: invalid JSON")
+	var syntaxErr *json.SyntaxError
+	if !errors.As(err, &syntaxErr) {
+		t.Fatalf("expected wrapped syntax error, got %v", err)
+	}
+}
+
+func TestLoadConfigUsesOptionalDefault(t *testing.T) {
+	t.Chdir(t.TempDir())
+	config, err := LoadConfig("")
+	if err != nil || config != nil {
+		t.Fatalf("expected no config for missing default, got %v, %v", config, err)
+	}
+	if err := os.Mkdir(DefaultConfigFile, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadConfig("")
+	if err == nil {
+		t.Fatal("expected error when the default config is a directory")
+	}
 }
 
 func TestParseConfigRejectsMissingOrEmptySections(t *testing.T) {

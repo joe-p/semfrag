@@ -1,7 +1,10 @@
 package semfrag
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -45,12 +48,19 @@ const (
 	ChannelRC     PromoteChannel = "rc"
 )
 
-// PromoteChannels lists the supported channels in ladder order.
-var PromoteChannels = []PromoteChannel{ChannelStable, ChannelAlpha, ChannelBeta, ChannelRC}
+// PromoteChannels returns the supported channels in display order.
+func PromoteChannels() []PromoteChannel {
+	return []PromoteChannel{ChannelStable, ChannelAlpha, ChannelBeta, ChannelRC}
+}
 
 // IsPromoteChannel reports whether value is a supported channel.
 func IsPromoteChannel(value string) bool {
-	return slices.Contains(PromoteChannels, PromoteChannel(value))
+	switch PromoteChannel(value) {
+	case ChannelStable, ChannelAlpha, ChannelBeta, ChannelRC:
+		return true
+	default:
+		return false
+	}
 }
 
 // promoteSources lists the release states each channel accepts.
@@ -125,17 +135,11 @@ const DefaultInitialVersion = "1.0.0"
 // renameFile is a test seam for atomicWrite.
 var renameFile = os.Rename
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func listFragments(dir string) ([]string, error) {
-	if !fileExists(dir) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, fs.ErrNotExist) {
 		return []string{}, nil
 	}
-
-	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -154,35 +158,50 @@ func listFragments(dir string) ([]string, error) {
 // symlinks and preserving the destination's permissions.
 func atomicWrite(path, content string) error {
 	destination := path
-	if fileExists(path) {
-		resolved, err := filepath.EvalSymlinks(path)
-		if err != nil {
-			return err
-		}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err == nil {
 		destination = resolved
-	} else {
+	} else if errors.Is(err, fs.ErrNotExist) {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return err
 		}
 		destination = absolute
-	}
-
-	perm := os.FileMode(0o666)
-	if info, err := os.Stat(destination); err == nil {
-		perm = info.Mode().Perm()
-	}
-
-	handle, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".*.tmp")
-	if err != nil {
+	} else {
 		return err
+	}
+
+	info, err := os.Stat(destination)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+
+	// OpenFile applies the process umask, whereas Chmod does not. CreateTemp
+	// always uses 0600, so create an exclusive, randomly named file ourselves.
+	perm := os.FileMode(0o666)
+	if info != nil {
+		perm = 0o600
+	}
+	var handle *os.File
+	for {
+		temporary := filepath.Join(filepath.Dir(destination), "."+filepath.Base(destination)+"."+rand.Text()+".tmp")
+		handle, err = os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+		if errors.Is(err, fs.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		break
 	}
 	temporary := handle.Name()
 	defer os.Remove(temporary)
 
-	if err := handle.Chmod(perm); err != nil {
-		handle.Close()
-		return err
+	if info != nil {
+		if err := handle.Chmod(info.Mode().Perm()); err != nil {
+			handle.Close()
+			return err
+		}
 	}
 	if _, err := handle.WriteString(content); err != nil {
 		handle.Close()
@@ -240,8 +259,10 @@ func Init(options InitOptions) (InitResult, error) {
 	if parsed.Prerelease != "" || parsed.Build != "" {
 		return InitResult{}, fmt.Errorf("invalid initial version %q, expected a plain MAJOR.MINOR.PATCH version", requested)
 	}
-	if fileExists(options.Output) {
+	if _, err := os.Stat(options.Output); err == nil {
 		return InitResult{}, fmt.Errorf("%s already exists, remove it first or choose another output", options.Output)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return InitResult{}, err
 	}
 
 	version, err := BaseVersion(requested)
@@ -253,7 +274,11 @@ func Init(options InitOptions) (InitResult, error) {
 	if configPath == "" {
 		configPath = DefaultConfigFile
 	}
-	configWritten := !fileExists(configPath)
+	_, err = os.Stat(configPath)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return InitResult{}, err
+	}
+	configWritten := errors.Is(err, fs.ErrNotExist)
 
 	if !options.DryRun {
 		if err := os.MkdirAll(options.Dir, 0o777); err != nil {
@@ -371,16 +396,12 @@ func Generate(options GenerateOptions) (GenerateResult, error) {
 			input = "CHANGELOG.md"
 		}
 	}
-	existing := ""
-	if fileExists(input) {
-		data, err := os.ReadFile(input)
-		if err != nil {
-			return GenerateResult{}, err
-		}
-		existing = string(data)
+	data, err := os.ReadFile(input)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return GenerateResult{}, err
 	}
 
-	document, err := ParseChangelogDocument(existing, options.Types)
+	document, err := ParseChangelogDocument(string(data), options.Types)
 	if err != nil {
 		return GenerateResult{}, err
 	}

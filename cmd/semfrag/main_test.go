@@ -6,6 +6,20 @@ import (
 	"testing"
 )
 
+func TestParseArgsRejectsValuesOnBooleanFlags(t *testing.T) {
+	for _, arg := range []string{
+		"--dry-run=false", "--no-clear=true", "--help=", "--version=garbage",
+		"-vgarbage", "-h=false", "-vh",
+	} {
+		t.Run(arg, func(t *testing.T) {
+			_, err := parseArgs([]string{arg})
+			if err == nil || !strings.Contains(err.Error(), "does not take a value") {
+				t.Fatalf("expected invalid boolean flag error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestResolveVersionPrefersInjectedVersion(t *testing.T) {
 	original := version
 	defer func() { version = original }()

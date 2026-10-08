@@ -5,11 +5,33 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	semfrag "github.com/joe-p/semfrag"
 )
+
+func TestCLIInitHonorsUmask(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("umask is a Unix permission mechanism")
+	}
+	root := t.TempDir()
+	command := exec.Command("sh", "-c", `umask 077; exec "$1" init`, "sh", cliPath)
+	command.Dir = root
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("init failed: %v\n%s", err, output)
+	}
+	for _, name := range []string{"CHANGELOG.md", "semfrag.json"} {
+		info, err := os.Stat(filepath.Join(root, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("%s permissions = %04o, want 0600", name, got)
+		}
+	}
+}
 
 var cliPath string
 
@@ -25,7 +47,7 @@ func TestMain(m *testing.M) {
 	if err := build.Run(); err != nil {
 		panic(err)
 	}
-	os.Exit(m.Run())
+	m.Run()
 }
 
 func runCLI(t *testing.T, dir string, args ...string) (string, error) {

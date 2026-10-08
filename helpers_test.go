@@ -1,10 +1,16 @@
 package semfrag
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
 
 func assertEqual[T any](t *testing.T, got, want T) {
 	t.Helper()

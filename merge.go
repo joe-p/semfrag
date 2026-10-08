@@ -14,6 +14,7 @@ func MergeSections(groups [][]Section, order []string, types SectionTypes) ([]Se
 	ordered := []*Section{}
 	byTitle := map[string]*Section{}
 	rawBodies := map[string]map[string]bool{}
+	kinds := map[string]SectionType{}
 
 	for _, group := range groups {
 		for _, section := range group {
@@ -23,11 +24,16 @@ func MergeSections(groups [][]Section, order []string, types SectionTypes) ([]Se
 				}
 			}
 
-			if sectionKind(section, types) == SectionRaw {
-				mergeRawSection(section, byTitle, rawBodies, &ordered)
+			kind := sectionKind(section, types)
+			if previous, ok := kinds[section.Title]; ok && previous != kind {
+				return nil, fmt.Errorf("conflicting types for section %q: %s and %s", section.Title, previous, kind)
+			}
+			kinds[section.Title] = kind
+			if kind == SectionRaw {
+				ordered = mergeRawSection(section, byTitle, rawBodies, ordered)
 				continue
 			}
-			mergeListSection(section, byTitle, &ordered)
+			ordered = mergeListSection(section, byTitle, ordered)
 		}
 	}
 
@@ -42,13 +48,16 @@ func sectionKind(section Section, types SectionTypes) SectionType {
 	if section.Type != "" {
 		return section.Type
 	}
-	return types[section.Title]
+	if kind := types[section.Title]; kind != "" {
+		return kind
+	}
+	return SectionList
 }
 
-func mergeRawSection(section Section, byTitle map[string]*Section, rawBodies map[string]map[string]bool, ordered *[]*Section) {
+func mergeRawSection(section Section, byTitle map[string]*Section, rawBodies map[string]map[string]bool, ordered []*Section) []*Section {
 	body := section.Body
 	if strings.TrimSpace(body) == "" {
-		return
+		return ordered
 	}
 
 	target := byTitle[section.Title]
@@ -56,12 +65,12 @@ func mergeRawSection(section Section, byTitle map[string]*Section, rawBodies map
 		target = &Section{Title: section.Title, Type: SectionRaw, Lines: []string{}}
 		byTitle[section.Title] = target
 		rawBodies[section.Title] = map[string]bool{}
-		*ordered = append(*ordered, target)
+		ordered = append(ordered, target)
 	}
 
 	seen := rawBodies[section.Title]
 	if seen[body] {
-		return
+		return ordered
 	}
 	seen[body] = true
 	if target.Body == "" {
@@ -69,18 +78,19 @@ func mergeRawSection(section Section, byTitle map[string]*Section, rawBodies map
 	} else {
 		target.Body += "\n\n" + body
 	}
+	return ordered
 }
 
-func mergeListSection(section Section, byTitle map[string]*Section, ordered *[]*Section) {
+func mergeListSection(section Section, byTitle map[string]*Section, ordered []*Section) []*Section {
 	if len(section.Lines) == 0 {
-		return
+		return ordered
 	}
 
 	target := byTitle[section.Title]
 	if target == nil {
 		target = &Section{Title: section.Title, Lines: []string{}}
 		byTitle[section.Title] = target
-		*ordered = append(*ordered, target)
+		ordered = append(ordered, target)
 	}
 
 	seen := map[string]bool{}
@@ -95,6 +105,7 @@ func mergeListSection(section Section, byTitle map[string]*Section, ordered *[]*
 		target.Lines = append(target.Lines, item...)
 		seen[key] = true
 	}
+	return ordered
 }
 
 func itemKey(item []string) string {

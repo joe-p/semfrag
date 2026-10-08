@@ -5,21 +5,6 @@ import (
 	"time"
 )
 
-var months = [...]string{
-	"January",
-	"February",
-	"March",
-	"April",
-	"May",
-	"June",
-	"July",
-	"August",
-	"September",
-	"October",
-	"November",
-	"December",
-}
-
 func ordinal(day int) string {
 	if day >= 11 && day <= 13 {
 		return "th"
@@ -36,7 +21,8 @@ func ordinal(day int) string {
 	}
 }
 
+// FormatReleaseDate formats date as an English month, ordinal day, and year.
 func FormatReleaseDate(date time.Time) string {
 	day := date.Day()
-	return fmt.Sprintf("%s %d%s, %d", months[date.Month()-1], day, ordinal(day), date.Year())
+	return fmt.Sprintf("%s %d%s, %d", date.Month(), day, ordinal(day), date.Year())
 }

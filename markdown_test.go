@@ -2,6 +2,34 @@ package semfrag
 
 import "testing"
 
+func TestMergeSectionsRejectsConflictingTypes(t *testing.T) {
+	list := Section{Title: "Details", Lines: []string{"- item"}}
+	raw := Section{Title: "Details", Type: SectionRaw, Body: "paragraph"}
+	for _, test := range []struct {
+		name     string
+		sections []Section
+	}{
+		{"list then raw", []Section{list, raw}},
+		{"raw then list", []Section{raw, list}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := MergeSections([][]Section{test.sections}, nil, nil)
+			assertErrorContains(t, err, `conflicting types for section "Details"`)
+		})
+	}
+}
+
+func TestMergeSectionsTreatsEmptyTypeAsList(t *testing.T) {
+	sections, err := MergeSections([][]Section{{
+		{Title: "Fixes", Lines: []string{"- one"}},
+		{Title: "Fixes", Type: SectionList, Lines: []string{"- two"}},
+	}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, sections, []Section{{Title: "Fixes", Lines: []string{"- one", "- two"}}})
+}
+
 func TestParseFragmentSplitsSections(t *testing.T) {
 	sections, err := ParseFragment("## Fixes\n\n- a\n- b\n\n## Features\n\n- c\n", nil)
 	if err != nil {

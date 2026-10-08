@@ -1,8 +1,11 @@
 package semfrag
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"strings"
 )
@@ -83,85 +86,65 @@ func SerializeConfig(config ChangelogConfig) (string, error) {
 // ParseConfig validates raw JSON and returns the config, reporting errors
 // against source.
 func ParseConfig(raw, source string) (ChangelogConfig, error) {
-	var parsed any
-	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		return ChangelogConfig{}, fmt.Errorf("%s: invalid JSON (%s)", source, err)
+	var document json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &document); err != nil {
+		return ChangelogConfig{}, fmt.Errorf("%s: invalid JSON: %w", source, err)
 	}
 
-	object, ok := parsed.(map[string]any)
-	if !ok {
+	if bytes.TrimSpace(document)[0] != '{' {
 		return ChangelogConfig{}, fmt.Errorf("%s: expected a JSON object", source)
 	}
-
-	sections, ok := object["sections"].([]any)
-	if !ok || len(sections) == 0 {
+	var object struct {
+		Sections []json.RawMessage `json:"sections"`
+	}
+	if err := json.Unmarshal(document, &object); err != nil || len(object.Sections) == 0 {
 		return ChangelogConfig{}, fmt.Errorf(`%s: "sections" must be a non-empty array of section objects`, source)
 	}
 
-	titles := make([]string, 0, len(sections))
-	result := make([]SectionConfig, 0, len(sections))
+	titles := make(map[string]bool, len(object.Sections))
+	result := make([]SectionConfig, 0, len(object.Sections))
 
-	for index, entry := range sections {
-		sectionObject, ok := entry.(map[string]any)
-		if !ok {
+	for index, entry := range object.Sections {
+		var sectionObject struct {
+			Title json.RawMessage `json:"title"`
+			Bump  json.RawMessage `json:"bump"`
+			Type  json.RawMessage `json:"type"`
+		}
+		if bytes.TrimSpace(entry)[0] != '{' {
 			return ChangelogConfig{}, fmt.Errorf("%s: sections[%d] must be an object", source, index)
 		}
+		if err := json.Unmarshal(entry, &sectionObject); err != nil {
+			return ChangelogConfig{}, fmt.Errorf("%s: sections[%d]: %w", source, index, err)
+		}
 
-		title, ok := sectionObject["title"].(string)
-		if !ok || strings.TrimSpace(title) == "" {
+		var title string
+		if err := json.Unmarshal(sectionObject.Title, &title); err != nil || strings.TrimSpace(title) == "" {
 			return ChangelogConfig{}, fmt.Errorf("%s: sections[%d].title must be a non-empty string", source, index)
 		}
-		if containsString(titles, title) {
+		if titles[title] {
 			return ChangelogConfig{}, fmt.Errorf("%s: duplicate section %q", source, title)
 		}
-		titles = append(titles, title)
+		titles[title] = true
 
 		section := SectionConfig{Title: title}
-		if bump, present := sectionObject["bump"]; present {
-			level, ok := normalizeString(bump, strings.ToUpper)
-			if !ok || !IsBumpLevel(level) {
-				return ChangelogConfig{}, fmt.Errorf("%s: invalid bump level for %q: %s, expected MAJOR, MINOR or PATCH", source, title, jsonStringify(bump))
+		if bump := sectionObject.Bump; bump != nil {
+			var level string
+			if err := json.Unmarshal(bump, &level); err != nil || !IsBumpLevel(strings.ToUpper(level)) {
+				return ChangelogConfig{}, fmt.Errorf("%s: invalid bump level for %q: %s, expected MAJOR, MINOR or PATCH", source, title, bump)
 			}
-			section.Bump = BumpLevel(level)
+			section.Bump = BumpLevel(strings.ToUpper(level))
 		}
-		if sectionType, present := sectionObject["type"]; present {
-			kind, ok := normalizeString(sectionType, strings.ToLower)
-			if !ok || !IsSectionType(kind) {
-				return ChangelogConfig{}, fmt.Errorf("%s: invalid section type for %q: %s, expected list or raw", source, title, jsonStringify(sectionType))
+		if sectionType := sectionObject.Type; sectionType != nil {
+			var kind string
+			if err := json.Unmarshal(sectionType, &kind); err != nil || !IsSectionType(strings.ToLower(kind)) {
+				return ChangelogConfig{}, fmt.Errorf("%s: invalid section type for %q: %s, expected list or raw", source, title, sectionType)
 			}
-			section.Type = SectionType(kind)
+			section.Type = SectionType(strings.ToLower(kind))
 		}
 		result = append(result, section)
 	}
 
 	return ChangelogConfig{Sections: result}, nil
-}
-
-// normalizeString upper/lower-cases a JSON string value, reporting whether the
-// value was a string at all.
-func normalizeString(value any, transform func(string) string) (string, bool) {
-	text, ok := value.(string)
-	if !ok {
-		return "", false
-	}
-	return transform(text), true
-}
-
-func containsString(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-
-func jsonStringify(value any) string {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Sprintf("%v", value)
-	}
-	return string(encoded)
 }
 
 // ReadConfig reads and validates a config file.
@@ -176,15 +159,17 @@ func ReadConfig(path string) (ChangelogConfig, error) {
 // LoadConfig reads path when given, otherwise DefaultConfigFile if it exists.
 // It returns nil when no config is found.
 func LoadConfig(path string) (*ChangelogConfig, error) {
+	explicit := path != ""
 	if path == "" {
-		if !fileExists(DefaultConfigFile) {
-			return nil, nil
-		}
 		path = DefaultConfigFile
-	} else if !fileExists(path) {
-		return nil, fmt.Errorf("config file not found: %s", path)
 	}
 	config, err := ReadConfig(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if explicit {
+			return nil, fmt.Errorf("config file not found: %s: %w", path, err)
+		}
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
