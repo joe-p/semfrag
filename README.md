@@ -27,20 +27,16 @@ any fragments are cleared.
 
 ## Install
 
-As a dependency, with any package manager:
+As a Go tool:
 
 ```sh
-pnpm add -D semfrag
-# or
-npm install -D semfrag
-# or
-bun add -d semfrag
+go install github.com/joe-p/semfrag/cmd/semfrag@latest
 ```
 
 Or as a standalone binary that needs no runtime at all. Every
 [release](https://github.com/joe-p/semfrag/releases) ships self-contained
-executables built with `bun build --compile` for Linux, macOS and Windows on
-x64 and arm64:
+executables cross-compiled from Go for Linux, macOS and Windows on x64 and
+arm64:
 
 ```sh
 # Linux x64
@@ -61,9 +57,6 @@ The available assets are:
 | macOS arm64        | `semfrag-darwin-arm64`      |
 | Windows x64        | `semfrag-windows-x64.exe`   |
 | Windows arm64      | `semfrag-windows-arm64.exe` |
-
-The binaries are **not** attached to npm; `semfrag` on npm stays a normal
-Node-compatible package for use as a dependency or via `npx`.
 
 ## Usage
 
@@ -403,7 +396,7 @@ git ls-remote https://github.com/joe-p/semfrag refs/tags/v0.8.0
 
 Dependabot's `github-actions` ecosystem understands this form and updates both
 the SHA and the comment. The binary the actions install follows the same pin: it
-defaults to the version in `package.json` at that commit. Pass `version` to
+defaults to the version in `VERSION` at that commit. Pass `version` to
 override it, for example `version: latest`.
 
 ### Release on every push
@@ -482,7 +475,7 @@ This repository's own
 [`pr.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/pr.yml)
 and
 [`release.yml`](https://github.com/joe-p/semfrag/blob/main/.github/workflows/release.yml)
-use these actions, adding standalone binaries and an npm publish around them.
+use these actions, adding standalone binaries around them.
 
 Outside GitHub Actions, the same release takes four commands:
 
@@ -552,34 +545,46 @@ Replace `oldThing()` with `newThing()`.
 
 ## Programmatic API
 
-```ts
-import { generate, init, latest, notes, promote, parseChangelog } from "semfrag";
+```go
+package main
 
-await init({
-  output: "CHANGELOG.md",
-  dir: "changelog.d",
-  config: "semfrag.json",
-  version: "0.1.0",
-  dryRun: false,
-});
+import (
+	"fmt"
 
-await generate({
-  dir: "changelog.d",
-  output: "CHANGELOG.md",
-  clear: true,
-  dryRun: false,
-  order: ["Breaking Changes", "Fixes", "Features", "Upgrade Guide"],
-  bump: { "Breaking Changes": "MAJOR", Fixes: "PATCH", Features: "MINOR" },
-  types: { "Upgrade Guide": "raw" },
-});
+	semfrag "github.com/joe-p/semfrag"
+)
 
-await promote({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false, channel: "stable" });
-await promote({ output: "CHANGELOG.md", dir: "changelog.d", dryRun: false, channel: "alpha" });
+func main() {
+	_, _ = semfrag.Init(semfrag.InitOptions{
+		Output:  "CHANGELOG.md",
+		Dir:     "changelog.d",
+		Config:  "semfrag.json",
+		Version: "0.1.0",
+	})
 
-const { version } = await latest({ output: "CHANGELOG.md" });
-const { notes } = await notes({ output: "CHANGELOG.md" });
+	_, _ = semfrag.Generate(semfrag.GenerateOptions{
+		Dir:    "changelog.d",
+		Output: "CHANGELOG.md",
+		Clear:  true,
+		Order:  []string{"Breaking Changes", "Fixes", "Features", "Upgrade Guide"},
+		Bump: map[string]semfrag.BumpLevel{
+			"Breaking Changes": semfrag.BumpMajor,
+			"Fixes":            semfrag.BumpPatch,
+			"Features":         semfrag.BumpMinor,
+		},
+		Types: semfrag.SectionTypeMap{"Upgrade Guide": semfrag.SectionTypeRaw},
+	})
 
-const blocks = parseChangelog("# 1.0.0\n\n## Features\n\n- hello\n", { Features: "list" });
+	_, _ = semfrag.Promote(semfrag.PromoteOptions{Output: "CHANGELOG.md", Dir: "changelog.d", Channel: semfrag.ChannelStable})
+	_, _ = semfrag.Promote(semfrag.PromoteOptions{Output: "CHANGELOG.md", Dir: "changelog.d", Channel: semfrag.ChannelAlpha})
+
+	latest, _ := semfrag.Latest(semfrag.LatestOptions{Output: "CHANGELOG.md"})
+	notes, _ := semfrag.Notes(semfrag.NotesOptions{Output: "CHANGELOG.md"})
+	fmt.Println(latest.Version, notes.Notes)
+
+	blocks, _ := semfrag.ParseChangelog("# 1.0.0\n\n## Features\n\n- hello\n", semfrag.SectionTypeMap{"Features": semfrag.SectionTypeList})
+	_ = blocks
+}
 ```
 
 ## License

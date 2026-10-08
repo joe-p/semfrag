@@ -16,41 +16,40 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          bun-version: 1.4.2
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Lint
-        run: bun run lint
+          go-version-file: go.mod
 
       - name: Check formatting
-        run: bun run format
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::The following files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
 
-      - name: Check types
-        run: bun run check-types
+      - name: Vet
+        run: go vet ./...
 
       - name: Test
-        run: bun run test
+        run: go test ./...
 
       - name: Build
-        run: bun run build
+        run: go build ./...
 
       - name: Put the built CLI on PATH
         run: |
           mkdir -p "$RUNNER_TEMP/semfrag-dev"
-          printf '#!/bin/sh\nexec bun "%s/dist/cli.js" "$@"\n' "$PWD" > "$RUNNER_TEMP/semfrag-dev/semfrag"
-          chmod +x "$RUNNER_TEMP/semfrag-dev/semfrag"
+          go build -o "$RUNNER_TEMP/semfrag-dev/semfrag" ./cmd/semfrag
           echo "$RUNNER_TEMP/semfrag-dev" >> "$GITHUB_PATH"
 
       - name: Check changelog
         uses: ./actions/check
         with:
           install: false
-          require-fragment-for: ^src/
+          require-fragment-for: \.go$
 
   setup-action:
     strategy:

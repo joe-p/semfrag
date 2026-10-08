@@ -6,14 +6,16 @@ set -euo pipefail
 version="${SEMFRAG_INSTALL_VERSION:-}"
 repo="joe-p/semfrag"
 
-# Default to the version in this action's own package.json, so pinning the
+# Default to the version in this action's own VERSION file, so pinning the
 # action to a commit also pins the binary. At a release commit this is the
 # release itself; at any other commit it is the previous release.
 if [ -z "$version" ]; then
-  package_json="$(dirname "${BASH_SOURCE[0]}")/../../package.json"
-  version="$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$package_json" | head -n 1)"
+  version_file="$(dirname "${BASH_SOURCE[0]}")/../../VERSION"
+  if [ -f "$version_file" ]; then
+    version="$(tr -d '[:space:]' < "$version_file")"
+  fi
   if [ -z "$version" ]; then
-    echo "::error::Could not read the semfrag version from ${package_json}; pass the version input."
+    echo "::error::Could not read the semfrag version from ${version_file}; pass the version input."
     exit 1
   fi
 fi
