@@ -7,7 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 
-	semfrag "github.com/joe-p/semfrag"
+	semfrag "github.com/joe-p/semfrag/internal/semfrag"
 )
 
 // version is injected at build time by scripts/build-binaries.sh. Binaries

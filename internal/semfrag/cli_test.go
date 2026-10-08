@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	semfrag "github.com/joe-p/semfrag"
+	semfrag "github.com/joe-p/semfrag/internal/semfrag"
 )
 
 func TestCLIInitHonorsUmask(t *testing.T) {
@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(dir)
 	cliPath = filepath.Join(dir, "semfrag")
-	build := exec.Command("go", "build", "-o", cliPath, "./cmd/semfrag")
+	build := exec.Command("go", "build", "-o", cliPath, "github.com/joe-p/semfrag/cmd/semfrag")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		panic(err)
@@ -240,7 +240,7 @@ func TestCLIAllowsExplicitAndStdoutValues(t *testing.T) {
 func TestCLIVersionUsesLinkerFlag(t *testing.T) {
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "semfrag-version")
-	build := exec.Command("go", "build", "-ldflags", "-X main.version=9.9.9", "-o", binary, "./cmd/semfrag")
+	build := exec.Command("go", "build", "-ldflags", "-X main.version=9.9.9", "-o", binary, "github.com/joe-p/semfrag/cmd/semfrag")
 	build.Stderr = os.Stderr
 	if err := build.Run(); err != nil {
 		t.Fatalf("go build returned error: %v", err)
