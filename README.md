@@ -33,6 +33,12 @@ As a Go tool:
 go install github.com/joe-p/semfrag/cmd/semfrag@latest
 ```
 
+Or with npm, which installs the prebuilt binary for your platform:
+
+```sh
+npm install -g semfrag
+```
+
 Or as a standalone binary that needs no runtime at all. Every
 [release](https://github.com/joe-p/semfrag/releases) ships self-contained
 executables cross-compiled from Go for Linux, macOS and Windows on x64 and

@@ -11,6 +11,8 @@ concurrency:
 
 permissions:
   contents: write
+  # Used by npm to attach provenance to the published packages.
+  id-token: write
 
 jobs:
   release:
@@ -64,3 +66,25 @@ jobs:
       - name: Roll back failed release
         if: failure() || cancelled()
         uses: ./actions/rollback
+
+      # npm failures leave the GitHub release intact because npm publishes
+      # cannot be undone. The wrapper package is published only after every
+      # platform package it depends on succeeded.
+      #
+      # Auth is npm trusted publishing (OIDC): no NPM_TOKEN. Platform packages
+      # are published under the @semfrag org; the wrapper is unscoped. Every
+      # package published here needs a trusted publisher configured on
+      # npmjs.com for joe-p/semfrag and workflow release.yml. Node 24 ships
+      # npm >= 11.5.1, the minimum for trusted publishing.
+      - name: Set up Node
+        if: steps.semfrag.outputs.released == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Publish to npm
+        if: steps.semfrag.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.semfrag.outputs.version }}
+        run: node scripts/publish-npm.mjs
