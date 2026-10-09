@@ -1,3 +1,9 @@
+# 0.11.0 - October 9th, 2026
+
+## Features
+
+- Look for `semfrag.json` in the current directory and each parent directory, stopping at the git root or filesystem root.
+
 # 0.10.0 - October 8th, 2026
 
 ## Breaking Changes
