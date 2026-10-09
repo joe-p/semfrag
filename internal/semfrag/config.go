@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -156,12 +157,21 @@ func ReadConfig(path string) (ChangelogConfig, error) {
 	return ParseConfig(string(raw), path)
 }
 
-// LoadConfig reads path when given, otherwise DefaultConfigFile if it exists.
-// It returns nil when no config is found.
+// LoadConfig reads path when given, otherwise it searches the current directory
+// and each of its parents for DefaultConfigFile, stopping at the git root (a
+// directory containing .git) or the filesystem root. It returns nil when no
+// config is found.
 func LoadConfig(path string) (*ChangelogConfig, error) {
 	explicit := path != ""
 	if path == "" {
-		path = DefaultConfigFile
+		found, err := findDefaultConfig()
+		if err != nil {
+			return nil, err
+		}
+		if found == "" {
+			return nil, nil
+		}
+		path = found
 	}
 	config, err := ReadConfig(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -174,4 +184,28 @@ func LoadConfig(path string) (*ChangelogConfig, error) {
 		return nil, err
 	}
 	return &config, nil
+}
+
+// findDefaultConfig returns the path of the first DefaultConfigFile found in the
+// current directory or one of its parents, stopping after the git root or at the
+// filesystem root. It returns an empty string when none is found.
+func findDefaultConfig() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		candidate := filepath.Join(dir, DefaultConfigFile)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return "", nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", nil
+		}
+		dir = parent
+	}
 }
