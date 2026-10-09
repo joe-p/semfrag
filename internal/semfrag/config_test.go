@@ -115,6 +115,63 @@ func TestLoadConfigUsesOptionalDefault(t *testing.T) {
 	}
 }
 
+func TestLoadConfigSearchesParentDirectories(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, DefaultConfigFile), []byte(`{"sections":[{"title":"Fixes","bump":"PATCH"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "a", "b")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	config, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	assertEqual(t, *config, ChangelogConfig{Sections: []SectionConfig{{Title: "Fixes", Bump: BumpPatch}}})
+}
+
+func TestLoadConfigPrefersNearestParent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, DefaultConfigFile), []byte(`{"sections":[{"title":"Fixes"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "sub")
+	if err := os.Mkdir(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sub, DefaultConfigFile), []byte(`{"sections":[{"title":"Features"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(filepath.Join(sub))
+	config, err := LoadConfig("")
+	if err != nil {
+		t.Fatalf("LoadConfig returned error: %v", err)
+	}
+	assertEqual(t, *config, ChangelogConfig{Sections: []SectionConfig{{Title: "Features"}}})
+}
+
+func TestLoadConfigStopsAtGitRoot(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, DefaultConfigFile), []byte(`{"sections":[{"title":"Fixes"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(base, "repo")
+	sub := filepath.Join(repo, "sub")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+	config, err := LoadConfig("")
+	if err != nil || config != nil {
+		t.Fatalf("expected the search to stop at the git root, got %v, %v", config, err)
+	}
+}
+
 func TestParseConfigRejectsMissingOrEmptySections(t *testing.T) {
 	_, err := ParseConfig("{}", "test")
 	assertErrorContains(t, err, `"sections" must be a non-empty array`)

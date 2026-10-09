@@ -68,7 +68,9 @@ Options:
   -d, --dir <path>      Directory containing changelog fragments (default: changelog.d)
   -o, --output <path>   Changelog file, or "-" for stdout (default: CHANGELOG.md)
       --input <path>    Existing changelog to read (default: output, or CHANGELOG.md for stdout)
-  -c, --config <path>   Config file to read or, for init, write (default: semfrag.json)
+  -c, --config <path>   Config file to read or, for init, write (default: the
+                        nearest semfrag.json in this or a parent directory, up
+                        to the git root)
       --initial <ver>   init only: starting version, e.g. 0.1.0 or 1.0.0 (default: 1.0.0)
       --dry-run         Print the result without writing or clearing
       --no-clear        Keep the fragment files after generating

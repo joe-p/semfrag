@@ -494,7 +494,9 @@ gh release create "$tag" --notes "$(semfrag notes)"
 
 ## Configuration
 
-By default `semfrag` looks for `semfrag.json`. It lists the allowed
+By default `semfrag` looks for `semfrag.json`, searching the current directory
+and then each parent up to the git root (or the filesystem root when not inside a
+git repository). Pass `--config` to use a specific file. It lists the allowed
 sections in the order they should appear, along with the semantic version bump
 each section implies:
 
