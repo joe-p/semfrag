@@ -1,5 +1,5 @@
 name: semfrag rollback
-description: "Undo a failed release. Deletes the GitHub release and tag created by this run and restores the branch. Run it last with `if: failure() || cancelled()`."
+description: "Undo a failed release. Deletes the GitHub release and tag created by this run and pushes a commit that reverts the release commit. Run it last with `if: failure() || cancelled()`."
 author: Joe Polny
 
 inputs:
@@ -7,6 +7,10 @@ inputs:
     description: "Token used to delete the GitHub release. Needs `contents: write`."
     required: false
     default: ${{ github.token }}
+  commit-message:
+    description: Message of the revert commit. `{tag}` is replaced with the tag. Keep `[skip ci]` so pushing the revert doesn't start the release workflow again.
+    required: false
+    default: "chore: revert {tag} [skip ci]"
 
 runs:
   using: composite
@@ -15,6 +19,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        COMMIT_MESSAGE: ${{ inputs.commit-message }}
       run: |
         set -uo pipefail
 
@@ -57,8 +62,19 @@ runs:
         if [ -n "$base_sha" ] && [ "$base_sha" != "$run_commit_sha" ]; then
           remote_branch_sha="$(git ls-remote --refs origin "refs/heads/${branch}" 2>/dev/null | awk '{print $1}' || true)"
           if [ "$remote_branch_sha" = "$run_commit_sha" ]; then
-            echo "Restoring ${branch} to ${base_sha}..."
-            git push --force-with-lease="refs/heads/${branch}:${run_commit_sha}" origin "+${base_sha}:refs/heads/${branch}"
+            # Reverts with a new commit instead of force pushing the branch back
+            # to base_sha. The force push's head commit is the commit being
+            # released, which has no `[skip ci]`, so it would start the release
+            # workflow again, and a release that keeps failing would loop
+            # forever. The revert is built from base_sha's tree so the working
+            # tree, which later steps may have changed, isn't touched.
+            message="${COMMIT_MESSAGE//\{tag\}/$tag}"
+            if ! revert_sha="$(git commit-tree "${base_sha}^{tree}" -p "$run_commit_sha" -m "$message")" || [ -z "$revert_sha" ]; then
+              echo "::error::Could not create the revert commit; leaving ${branch} untouched."
+              exit 1
+            fi
+            echo "Reverting ${branch} to ${base_sha} with ${revert_sha}..."
+            git push origin "${revert_sha}:refs/heads/${branch}"
           else
             echo "Remote ${branch} does not point to this run's commit; leaving it untouched."
           fi

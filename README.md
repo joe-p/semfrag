@@ -390,7 +390,7 @@ install the standalone binary, so no language runtime is needed.
 | `joe-p/semfrag/actions/check` | Validate fragments with `generate --dry-run`, and optionally require a fragment when matching paths change |
 | `joe-p/semfrag/actions/prepare` | Run `generate` and `promote`, and output `released`, `version`, `notes` and `notes-file` |
 | `joe-p/semfrag/actions/publish` | Commit the release, push it, tag it and create a GitHub release with the notes, optionally uploading `assets` |
-| `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and restore the branch |
+| `joe-p/semfrag/actions/rollback` | Delete the GitHub release and tag created by this run and revert the release commit |
 
 The actions are not versioned separately yet, so reference them by the full
 commit SHA of a semfrag release, with the version as a comment. Every release
@@ -454,6 +454,12 @@ then also undoes the release when one of your own steps fails, such as the
 publish above. A rollback cannot unpublish a package that already reached a
 registry, so make publish steps skip versions that already exist if you publish
 to more than one place.
+
+`rollback` undoes the release commit by pushing a revert commit, not by force
+pushing the branch, so a release that keeps failing doesn't start itself again.
+The revert's message, set with `commit-message`, includes `[skip ci]`; keep it if
+your release workflow runs on pushes. The branch is left alone if something else
+was pushed after the release commit.
 
 `publish` stages modified and deleted tracked files with `git add -u`, along
 with the configured changelog. Other new files are not committed. See each
