@@ -1,3 +1,9 @@
+# 0.11.1 - November 3rd, 2026
+
+## Fixes
+
+- `rollback` now undoes the release commit by pushing a revert commit with `[skip ci]` instead of force pushing the branch back. The force push's head commit had no `[skip ci]`, so a release workflow triggered by pushes started again, and a release that kept failing looped forever. Set the revert's message with the new `commit-message` input.
+
 # 0.11.0 - October 9th, 2026
 
 ## Features
